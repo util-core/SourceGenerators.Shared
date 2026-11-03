@@ -1,0 +1,10 @@
+<Project>
+
+	<!-- 将包内源码注入消费方编译项 -->
+	<ItemGroup>
+		<Compile Include="$(MSBuildThisFileDirectory)..\Source\**\*.cs"
+		         Link="SourceGenerators.Shared\%(RecursiveDir)%(Filename)%(Extension)"
+		         Visible="false" />
+	</ItemGroup>
+
+</Project>

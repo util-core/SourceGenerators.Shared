@@ -1,0 +1,12 @@
+<Project>
+
+	<PropertyGroup>
+		<!-- 本组件使用独立版本线，不与任何框架版本对齐 -->
+		<VersionMajor>1</VersionMajor>
+		<VersionMinor>0</VersionMinor>
+		<VersionPatch>0</VersionPatch>
+		<VersionPrefix>$(VersionMajor).$(VersionMinor).$(VersionPatch)</VersionPrefix>
+		<VersionSuffix>preview.1</VersionSuffix>
+	</PropertyGroup>
+
+</Project>

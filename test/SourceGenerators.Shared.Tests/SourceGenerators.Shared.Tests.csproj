@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<!-- 用 net8.0 + C# 10 + Roslyn 4.8 验证源码包的向后兼容性，而不是只验证 .NET 10 最新工具链 -->
+		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>10.0</LangVersion>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<UseAppHost>true</UseAppHost>
+		<!-- 触发 net8.0 的 apphost 包还原，按当前 SDK 的 RID 生成，避免写死 win-x64 -->
+		<RuntimeIdentifier>$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+		<Nullable>disable</Nullable>
+		<ImplicitUsings>disable</ImplicitUsings>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+		<PackageReference Include="xunit.v3" Version="4.0.2" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- 直接把源码包的 Source 目录编进测试程序集，验证 internal 在消费方程序集内可用 -->
+		<Compile Include="..\..\src\SourceGenerators.Shared\Source\**\*.cs"
+		         Link="SourceGenerators.Shared\%(RecursiveDir)%(Filename)%(Extension)" />
+	</ItemGroup>
+
+</Project>
