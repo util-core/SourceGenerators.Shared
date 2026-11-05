@@ -7,7 +7,7 @@
 在**源生成器项目**引用包：
 
 ```xml
-<PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.1" PrivateAssets="all" />
+<PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.2" PrivateAssets="all" />
 ```
 
 `PrivateAssets="all"` 防止该包进入生成器发布后的依赖。
@@ -18,8 +18,10 @@ props 会把以下源码编入当前项目，命名空间为 `SourceGenerators.S
 SourceGenerators.Shared\Usings.cs
 SourceGenerators.Shared\Internal\CompilationIndex.cs
 SourceGenerators.Shared\Internal\GeneratedSource.cs
+SourceGenerators.Shared\Internal\HintNameAllocator.cs
 SourceGenerators.Shared\Internal\ImportScope.cs
 SourceGenerators.Shared\Internal\DefaultValueFormatter.cs
+SourceGenerators.Shared\Internal\TypeNameText.cs
 ```
 
 `Usings.cs` 是全局 using，会作用于当前项目。
@@ -37,7 +39,7 @@ SourceGenerators.Shared\Internal\DefaultValueFormatter.cs
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.1" PrivateAssets="all" />
+    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.2" PrivateAssets="all" />
   </ItemGroup>
 </Project>
 ```
@@ -62,7 +64,7 @@ public sealed class CustomerGenerator : IIncrementalGenerator {
             var customer = compilation.GetTypeByMetadataName( "Demo.Customer" );
             if( customer == null )
                 return;
-            var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { customer } );
+            var scope = new ImportScope( index, new[] { "System" }, new ITypeSymbol[] { customer } );
             var body = "internal static class CustomerProbe { internal static System.Type Type => typeof( Customer ); }";
             var source = GeneratedSource.Wrap( body, scope.Imports, "Demo.Generated" );
             context.AddSource( "CustomerProbe.g.cs", SourceText.From( source, Encoding.UTF8 ) );
@@ -83,11 +85,21 @@ public sealed class CustomerGenerator : IIncrementalGenerator {
 
 ### CompilationIndex
 
-`CompilationIndex.From( compilation )` 建立名称索引，用于 `TypeExists`、`ContainsNamespace`、`HasNamespaceMember` 探测。
+`CompilationIndex.From( compilation )` 建立名称索引，用于 `TypeExists`、`ContainsNamespace`、`HasNamespaceMember` 探测。同一 `Compilation` 实例的索引会被缓存，可重复调用；已有索引时优先使用 `ImportScope( index, ... )` 构造重载，避免重复遍历。
 
 ### ImportScope
 
-`ImportScope` 按生成产物实际引用的类型动态构建 `using` 清单，并规避短名歧义。
+`ImportScope` 按生成产物实际引用的类型动态构建 `using` 清单，并规避短名歧义。短名是优先结果：只有命名空间未导入或短名冲突时，才把头部限定为全名，泛型实参与嵌套类型链仍尽量使用短名。例如：
+
+```csharp
+// using Lib; 时
+// Outer<int>.Inner<string>
+
+// Lib 未导入或 Outer 冲突时
+// global::Lib.Outer<int>.Inner<string>
+```
+
+嵌套泛型会完整保留外层类型及其实参；关键字标识符输出为 `@class` 形式。`System` 的 `using` 不会自动覆盖 `System.Text` 等子命名空间，子命名空间需要显式加入框架 using 清单或由引用类型自动带入。
 
 互斥命名空间用于避免同名类型冲突，由消费方按需传入：
 
@@ -95,7 +107,7 @@ public sealed class CustomerGenerator : IIncrementalGenerator {
 var scope = new ImportScope( compilation, frameworkImports, types, new[] { "Legacy.Helpers" } );
 ```
 
-多个互斥命名空间之间采用“先进入清单者优先”的策略，后续冲突项直接忽略，相关类型由 `Reference` 保留全限定名。
+多个互斥命名空间之间采用“先进入清单者优先”的策略，后续冲突项直接忽略，相关类型由 `Reference` 保留必要的全限定头部。
 
 ### GeneratedSource
 
@@ -105,9 +117,21 @@ var scope = new ImportScope( compilation, frameworkImports, types, new[] { "Lega
 var text = GeneratedSource.Wrap( inner, imports, "YourProduct.Internal.Generated" );
 ```
 
+`GeneratedSource.Reference` 同样遵循“短名优先”：命名空间已导入时使用短名，未导入时只限定头部，类型实参与嵌套链继续缩短。
+
+### HintNameAllocator
+
+`HintNameAllocator` 统一分配生成文件名：短名后接 `.g.cs`，非法字符转为下划线；撞名时在扩展名前追加 `_2`、`_3` 序号。需要预留的固定文件名通过构造参数传入，同样按短名书写。
+
+```csharp
+var allocator = new HintNameAllocator( new[] { "SharedInitializer" } );
+var fileName = allocator.Allocate( "Order" );
+context.AddSource( fileName, SourceText.From( source, Encoding.UTF8 ) );
+```
+
 ### DefaultValueFormatter
 
-`DefaultValueFormatter.Format( parameter )` 输出参数默认值字面量；无法表达时返回 `null`，或使用 `DefaultValueFormatter.Omitted` 省略默认值。
+`DefaultValueFormatter.Format( parameter )` 输出参数默认值字面量；无法表达时返回 `null`，或使用 `DefaultValueFormatter.Omitted` 省略默认值。可空类型按基础类型解析和输出（例如 `Level?` 的默认值仍保留枚举转换），字符串与字符字面量会转义控制字符、行分隔符与代理项。
 
 ## 作者
 

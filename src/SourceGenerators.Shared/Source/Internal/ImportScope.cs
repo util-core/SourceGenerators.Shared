@@ -30,7 +30,7 @@ internal sealed class ImportScope {
     /// </summary>
     internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<ITypeSymbol> types,
             IEnumerable<string> conflictingNamespaces = null )
-        : this( CompilationIndex.From( compilation ), frameworkImports, types, conflictingNamespaces ) {
+        : this( CreateIndex( compilation ), frameworkImports, types, conflictingNamespaces ) {
         _compilation = compilation;
     }
 
@@ -39,7 +39,10 @@ internal sealed class ImportScope {
     /// </summary>
     internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<ITypeSymbol> types,
             IEnumerable<string> conflictingNamespaces = null ) {
-        _index = index;
+        _index = RequireIndex( index );
+        RequireImports( frameworkImports );
+        if( types == null )
+            throw new ArgumentNullException( nameof( types ) );
         _ambiguousNames = new HashSet<string>( StringComparer.Ordinal );
         _conflictingNamespaces = CreateConflictSet( conflictingNamespaces );
         var shortNames = new Dictionary<string, SortedSet<string>>( StringComparer.Ordinal );
@@ -67,7 +70,7 @@ internal sealed class ImportScope {
     /// </summary>
     internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<string> fullNames,
             IEnumerable<string> conflictingNamespaces = null )
-        : this( CompilationIndex.From( compilation ), frameworkImports, fullNames, conflictingNamespaces ) {
+        : this( CreateIndex( compilation ), frameworkImports, fullNames, conflictingNamespaces ) {
         _compilation = compilation;
     }
 
@@ -76,7 +79,10 @@ internal sealed class ImportScope {
     /// </summary>
     internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<string> fullNames,
             IEnumerable<string> conflictingNamespaces = null ) {
-        _index = index;
+        _index = RequireIndex( index );
+        RequireImports( frameworkImports );
+        if( fullNames == null )
+            throw new ArgumentNullException( nameof( fullNames ) );
         _ambiguousNames = new HashSet<string>( StringComparer.Ordinal );
         _conflictingNamespaces = CreateConflictSet( conflictingNamespaces );
         var shortNames = new Dictionary<string, SortedSet<string>>( StringComparer.Ordinal );
@@ -119,6 +125,32 @@ internal sealed class ImportScope {
         if( conflictingNamespaces == null )
             return new HashSet<string>( StringComparer.Ordinal );
         return new HashSet<string>( conflictingNamespaces, StringComparer.Ordinal );
+    }
+
+    /// <summary>
+    /// 创建名称索引,编译单元不能为空
+    /// </summary>
+    private static CompilationIndex CreateIndex( Compilation compilation ) {
+        if( compilation == null )
+            throw new ArgumentNullException( nameof( compilation ) );
+        return CompilationIndex.From( compilation );
+    }
+
+    /// <summary>
+    /// 校验名称索引
+    /// </summary>
+    private static CompilationIndex RequireIndex( CompilationIndex index ) {
+        if( index == null )
+            throw new ArgumentNullException( nameof( index ) );
+        return index;
+    }
+
+    /// <summary>
+    /// 校验框架using清单
+    /// </summary>
+    private static void RequireImports( string[] frameworkImports ) {
+        if( frameworkImports == null )
+            throw new ArgumentNullException( nameof( frameworkImports ) );
     }
 
     /// <summary>
@@ -210,58 +242,65 @@ internal sealed class ImportScope {
     }
 
     /// <summary>
-    /// 展开全限定名中的泛型实参
+    /// 展开全限定名中的数组后缀与泛型实参
     /// </summary>
     private static IEnumerable<string> Flatten( IEnumerable<string> fullNames ) {
         foreach( var fullName in fullNames ) {
-            var text = StripGlobal( fullName );
-            var generic = text.IndexOf( '<' );
-            if( generic < 0 ) {
-                yield return text;
+            if( fullName == null )
                 continue;
-            }
-            yield return text.Substring( 0, generic );
-            var body = text.Substring( generic + 1, text.LastIndexOf( '>' ) - generic - 1 );
-            foreach( var argument in SplitTopLevel( body ) )
-                foreach( var segment in Flatten( new[] { argument } ) )
-                    yield return segment;
+            var text = TypeNameText.StripGlobal( fullName );
+            var core = TypeNameText.SplitArraySuffix( text, out _ );
+            foreach( var item in FlattenName( core ) )
+                yield return item;
         }
     }
 
     /// <summary>
-    /// 去掉global::前缀
+    /// 递归展开类型名,产出头部与全部泛型实参
     /// </summary>
-    private static string StripGlobal( string text ) {
-        return text.StartsWith( "global::", StringComparison.Ordinal ) ? text.Substring( 8 ) : text;
+    private static IEnumerable<string> FlattenName( string text ) {
+        var open = text.IndexOf( '<' );
+        if( open < 0 ) {
+            yield return text;
+            yield break;
+        }
+        var close = TypeNameText.FindMatchingAngle( text, open );
+        if( close < 0 ) {
+            yield return text;
+            yield break;
+        }
+        yield return text.Substring( 0, open );
+        foreach( var argument in TypeNameText.SplitTopLevel( text.Substring( open + 1, close - open - 1 ) ) ) {
+            foreach( var item in FlattenName( argument ) )
+                yield return item;
+        }
+        foreach( var argument in CollectArguments( text.Substring( close + 1 ) ) ) {
+            foreach( var item in FlattenName( argument ) )
+                yield return item;
+        }
     }
 
     /// <summary>
-    /// 按顶层逗号拆分泛型实参
+    /// 收集嵌套类型后续段的泛型实参
     /// </summary>
-    private static IEnumerable<string> SplitTopLevel( string body ) {
-        var depth = 0;
-        var start = 0;
-        for( var i = 0; i < body.Length; i++ ) {
-            var current = body[i];
-            if( current == '<' )
-                depth++;
-            else if( current == '>' )
-                depth--;
-            else if( current == ',' && depth == 0 ) {
-                yield return body.Substring( start, i - start ).Trim();
-                start = i + 1;
-            }
+    private static IEnumerable<string> CollectArguments( string text ) {
+        for( var index = 0; index < text.Length; index++ ) {
+            if( text[index] != '<' )
+                continue;
+            var close = TypeNameText.FindMatchingAngle( text, index );
+            if( close < 0 )
+                yield break;
+            foreach( var argument in TypeNameText.SplitTopLevel( text.Substring( index + 1, close - index - 1 ) ) )
+                yield return argument;
+            index = close;
         }
-        var last = body.Substring( start ).Trim();
-        if( last.Length > 0 )
-            yield return last;
     }
 
     /// <summary>
     /// 拆出owner与末段类型名
     /// </summary>
     private static (string Owner, string MetadataName) Split( string fullName ) {
-        var text = StripGlobal( fullName );
+        var text = TypeNameText.StripGlobal( fullName );
         var generic = text.IndexOf( '<' );
         var head = generic < 0 ? text : text.Substring( 0, generic );
         var index = head.LastIndexOf( '.' );
@@ -283,7 +322,7 @@ internal sealed class ImportScope {
     /// 回溯嵌套类型所属命名空间
     /// </summary>
     private (string Owner, string Id, string Chain)? SplitNested( string fullName ) {
-        var segments = StripGlobal( fullName ).Split( '.' );
+        var segments = TypeNameText.StripGlobal( fullName ).Split( '.' );
         for( var i = 0; i < segments.Length - 1; i++ ) {
             if( _index.TypeExists( string.Join( ".", segments, 0, i + 1 ) ) == false )
                 continue;
@@ -298,77 +337,148 @@ internal sealed class ImportScope {
     }
 
     /// <summary>
-    /// 类型引用名,已导入且无歧义时用短名
+    /// 类型引用名,已导入且无歧义时用短名,否则仅限定头部
     /// </summary>
     internal string Reference( ITypeSymbol type ) {
+        if( type == null )
+            throw new ArgumentNullException( nameof( type ) );
         if( type is IArrayTypeSymbol array )
             return Reference( array.ElementType ) + "[]";
-        if( type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable )
-            return Reference( nullable.TypeArguments[0] ) + "?";
-        if( type is INamedTypeSymbol named && named.IsGenericType ) {
-            var definition = named.ConstructedFrom;
-            var arguments = named.TypeArguments.Select( Reference );
-            return ResolveDefinition( definition, arguments );
-        }
-        var full = GeneratedSource.Full( type );
-        var metadataName = type.MetadataName;
-        if( type is not INamedTypeSymbol namedType || namedType.ContainingType == null ) {
-            var ( owner, name ) = Split( full );
-            if( owner == null )
-                return full;
-            if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
-                return full;
-            return name;
-        }
-        for( var current = namedType.ContainingType; current != null; current = current.ContainingType ) {
-            if( current.IsGenericType )
-                return full;
-        }
-        var namespaceName = namedType.ContainingNamespace;
-        if( namespaceName == null || namespaceName.IsGlobalNamespace )
-            return full;
-        var ns = namespaceName.ToDisplayString();
-        var resolvingName = ResolvingName( namedType );
-        if( Imported( ns ) == false || IsAmbiguous( ns, resolvingName ) )
-            return full;
-        return BuildNestedChain( namedType );
+        if( type is not INamedTypeSymbol named )
+            return GeneratedSource.Full( type );
+        if( IsNullable( named ) )
+            return Reference( named.TypeArguments[0] ) + "?";
+        if( named.SpecialType != SpecialType.None )
+            return GeneratedSource.Full( named );
+        var namespaceName = NamespaceName( named );
+        var chain = BuildChain( named );
+        if( namespaceName != null && Imported( namespaceName ) && IsAmbiguous( namespaceName, ResolvingName( named ) ) == false )
+            return chain;
+        return TypeNameText.Qualify( namespaceName == null ? chain : namespaceName + "." + chain );
     }
 
     /// <summary>
-    /// 泛型定义引用名
+    /// 构建类型链,嵌套类型逐层展开并递归缩短类型实参
     /// </summary>
-    private string ResolveDefinition( INamedTypeSymbol definition, IEnumerable<string> arguments ) {
-        var joined = string.Join( ", ", arguments );
-        var full = GeneratedSource.FullDefinition( definition );
-        var ( owner, _ ) = Split( full );
-        var metadataName = definition.MetadataName;
-        var shortName = Strip( metadataName );
-        if( owner == null || Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
-            return full + "<" + joined + ">";
-        return shortName + "<" + joined + ">";
+    private string BuildChain( INamedTypeSymbol type ) {
+        var builder = new StringBuilder();
+        if( type.ContainingType != null )
+            builder.Append( BuildChain( type.ContainingType ) ).Append( '.' );
+        builder.Append( GeneratedSource.Short( type ) );
+        if( type.IsGenericType ) {
+            builder.Append( '<' );
+            var arguments = type.TypeArguments;
+            for( var index = 0; index < arguments.Length; index++ ) {
+                if( index > 0 )
+                    builder.Append( ", " );
+                builder.Append( Reference( arguments[index] ) );
+            }
+            builder.Append( '>' );
+        }
+        return builder.ToString();
     }
 
     /// <summary>
-    /// 去掉元数据名的元数后缀
+    /// 是否可空值类型
     /// </summary>
-    private static string Strip( string metadataName ) {
-        var tick = metadataName.IndexOf( '`' );
-        return tick < 0 ? metadataName : metadataName.Substring( 0, tick );
+    private static bool IsNullable( INamedTypeSymbol type ) {
+        return type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
     }
 
     /// <summary>
-    /// 命名空间是否已导入,System子命名空间一并视为导入
+    /// 类型所在命名空间,全局命名空间返回null
+    /// </summary>
+    private static string NamespaceName( INamedTypeSymbol type ) {
+        var namespaceSymbol = type.ContainingNamespace;
+        return namespaceSymbol == null || namespaceSymbol.IsGlobalNamespace ? null : namespaceSymbol.ToDisplayString();
+    }
+
+    /// <summary>
+    /// 全限定名引用名,已导入且无歧义时用短名;裸名原样返回
+    /// </summary>
+    internal string Reference( string fullName ) {
+        if( fullName == null )
+            throw new ArgumentNullException( nameof( fullName ) );
+        var text = TypeNameText.StripGlobal( fullName );
+        var core = TypeNameText.SplitArraySuffix( text, out var suffix );
+        return ReferenceText( core ) + suffix;
+    }
+
+    /// <summary>
+    /// 递归缩短泛型实参
+    /// </summary>
+    private string ReferenceText( string text ) {
+        var open = text.IndexOf( '<' );
+        if( open < 0 )
+            return ReferenceCore( text );
+        var close = TypeNameText.FindMatchingAngle( text, open );
+        if( close < 0 )
+            return TypeNameText.Qualify( text );
+        var head = text.Substring( 0, open );
+        var arguments = TypeNameText.SplitTopLevel( text.Substring( open + 1, close - open - 1 ) )
+            .Select( Reference );
+        return ReferenceCore( head ) + "<" + string.Join( ", ", arguments ) + ">"
+            + ReferenceNested( text.Substring( close + 1 ) );
+    }
+
+    /// <summary>
+    /// 缩短嵌套类型后续段的泛型实参
+    /// </summary>
+    private string ReferenceNested( string text ) {
+        if( text.Length == 0 )
+            return string.Empty;
+        var builder = new StringBuilder( text.Length );
+        var index = 0;
+        while( index < text.Length ) {
+            var open = text.IndexOf( '<', index );
+            if( open < 0 ) {
+                builder.Append( text, index, text.Length - index );
+                break;
+            }
+            var close = TypeNameText.FindMatchingAngle( text, open );
+            if( close < 0 ) {
+                builder.Append( text, index, text.Length - index );
+                break;
+            }
+            builder.Append( text, index, open - index + 1 );
+            builder.Append( string.Join( ", ",
+                TypeNameText.SplitTopLevel( text.Substring( open + 1, close - open - 1 ) ).Select( Reference ) ) );
+            builder.Append( '>' );
+            index = close + 1;
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// 单个类型段短名化,未导入或有歧义时补 global:: 限定
+    /// </summary>
+    private string ReferenceCore( string segment ) {
+        var ( owner, metadataName ) = Split( segment );
+        if( owner == null )
+            return segment;
+        if( IsNamespace( owner ) == false ) {
+            var nested = SplitNested( segment );
+            if( nested == null || Imported( nested.Value.Owner ) == false || IsAmbiguous( nested.Value.Owner, nested.Value.Id ) )
+                return TypeNameText.Qualify( segment );
+            return nested.Value.Chain;
+        }
+        if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
+            return TypeNameText.Qualify( segment );
+        return metadataName;
+    }
+
+    /// <summary>
+    /// 未参与建域的类型引用名,未导入或有歧义时保留全限定名
+    /// </summary>
+    internal string ReferenceExternal( string fullName ) {
+        return Reference( fullName );
+    }
+
+    /// <summary>
+    /// 命名空间是否已导入
     /// </summary>
     private bool Imported( string namespaceName ) {
-        if( _imports.Contains( namespaceName, StringComparer.Ordinal ) )
-            return true;
-        foreach( var imported in _imports ) {
-            if( imported != GeneratedSource.SystemNamespace )
-                continue;
-            if( namespaceName.StartsWith( imported + ".", StringComparison.Ordinal ) )
-                return true;
-        }
-        return false;
+        return _imports.Contains( namespaceName, StringComparer.Ordinal );
     }
 
     /// <summary>
@@ -391,67 +501,5 @@ internal sealed class ImportScope {
     /// </summary>
     private bool ExistsMember( string namespaceName, string metadataName ) {
         return _index.HasNamespaceMember( namespaceName, metadataName );
-    }
-
-    /// <summary>
-    /// 构建嵌套类型链
-    /// </summary>
-    private static string BuildNestedChain( INamedTypeSymbol type ) {
-        var segments = new Stack<string>();
-        for( var current = type; current != null; current = current.ContainingType )
-            segments.Push( current.Name );
-        return string.Join( ".", segments );
-    }
-
-    /// <summary>
-    /// 全限定名引用名
-    /// </summary>
-    internal string Reference( string fullName ) {
-        var text = StripGlobal( fullName );
-        var generic = text.IndexOf( '<' );
-        if( generic < 0 )
-            return ReferenceCore( text );
-        var head = text.Substring( 0, generic );
-        var arguments = SplitArguments( text );
-        return ReferenceCore( head ) + "<" + arguments + ">";
-    }
-
-    /// <summary>
-    /// 单个类型段短名化
-    /// </summary>
-    private string ReferenceCore( string segment ) {
-        var ( owner, metadataName ) = Split( segment );
-        if( owner == null )
-            return segment;
-        if( IsNamespace( owner ) == false ) {
-            var nested = SplitNested( segment );
-            if( nested == null || Imported( nested.Value.Owner ) == false || IsAmbiguous( nested.Value.Owner, nested.Value.Id ) )
-                return "global::" + segment;
-            return nested.Value.Chain;
-        }
-        if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
-            return "global::" + segment;
-        return metadataName;
-    }
-
-    /// <summary>
-    /// 递归处理泛型实参
-    /// </summary>
-    private string SplitArguments( string text ) {
-        var start = text.IndexOf( '<' ) + 1;
-        var body = text.Substring( start, text.LastIndexOf( '>' ) - start );
-        return string.Join( ", ", SplitTopLevel( body ).Select( Reference ) );
-    }
-
-    /// <summary>
-    /// 未参与建域的类型引用名,未导入或有歧义时保留全限定名
-    /// </summary>
-    internal string ReferenceExternal( string fullName ) {
-        var ( owner, metadataName ) = Split( fullName );
-        if( owner == null || metadataName == null )
-            return "global::" + StripGlobal( fullName );
-        if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
-            return "global::" + StripGlobal( fullName );
-        return metadataName;
     }
 }

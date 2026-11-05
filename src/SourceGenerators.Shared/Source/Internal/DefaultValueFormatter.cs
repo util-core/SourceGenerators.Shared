@@ -13,6 +13,8 @@ internal static class DefaultValueFormatter {
     /// 输出参数默认值;无默认值返回null,值类型的 default 字段输出 default
     /// </summary>
     internal static string Format( IParameterSymbol parameter ) {
+        if( parameter == null )
+            throw new ArgumentNullException( nameof( parameter ) );
         if( parameter.HasExplicitDefaultValue == false )
             return null;
         var value = parameter.ExplicitDefaultValue;
@@ -34,10 +36,22 @@ internal static class DefaultValueFormatter {
     /// 按配置文本和目标类型输出字面量;无法解析返回null
     /// </summary>
     internal static string Format( string text, ITypeSymbol type ) {
+        if( type == null )
+            throw new ArgumentNullException( nameof( type ) );
+        type = UnwrapNullable( type );
         var value = Parse( text, type );
         if( value == null && type.SpecialType != SpecialType.System_String )
             return null;
         return FormatValue( value, type );
+    }
+
+    /// <summary>
+    /// 解包可空类型,取基础类型
+    /// </summary>
+    private static ITypeSymbol UnwrapNullable( ITypeSymbol type ) {
+        if( type is INamedTypeSymbol named && named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T )
+            return named.TypeArguments[0];
+        return type;
     }
 
     /// <summary>
@@ -54,7 +68,7 @@ internal static class DefaultValueFormatter {
             case SpecialType.System_Boolean:
                 return bool.TryParse( text, out var flag ) ? flag : (object)null;
             case SpecialType.System_Char:
-                return text.Length > 0 ? text[0] : (object)null;
+                return text.Length == 1 ? text[0] : (object)null;
             case SpecialType.System_SByte:
                 return sbyte.TryParse( text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i8 ) ? i8 : (object)null;
             case SpecialType.System_Byte:
@@ -127,6 +141,9 @@ internal static class DefaultValueFormatter {
     /// 按字面量类型输出C#表达式;无法表达返回空字符串
     /// </summary>
     internal static string FormatValue( object value, ITypeSymbol type ) {
+        if( type == null )
+            return string.Empty;
+        type = UnwrapNullable( type );
         if( value is bool flag )
             return flag ? "true" : "false";
         if( value is string text )
@@ -136,9 +153,9 @@ internal static class DefaultValueFormatter {
         if( type.TypeKind == TypeKind.Enum )
             return "( " + GeneratedSource.Full( type ) + " )" + ToInteger( value );
         if( value is float single )
-            return Floating( single, double.IsNaN( single ), float.IsPositiveInfinity( single ), float.IsNegativeInfinity( single ), "f", "F" );
+            return Floating( single, double.IsNaN( single ), float.IsPositiveInfinity( single ), float.IsNegativeInfinity( single ), "f" );
         if( value is double number )
-            return Floating( number, double.IsNaN( number ), double.IsPositiveInfinity( number ), double.IsNegativeInfinity( number ), "d", "D" );
+            return Floating( number, double.IsNaN( number ), double.IsPositiveInfinity( number ), double.IsNegativeInfinity( number ), "d" );
         if( value is decimal money )
             return money.ToString( CultureInfo.InvariantCulture ) + "m";
         if( value is long longValue )
@@ -178,7 +195,7 @@ internal static class DefaultValueFormatter {
     /// <summary>
     /// 浮点字面量;NaN与无穷用静态成员
     /// </summary>
-    private static string Floating( double value, bool nan, bool positive, bool negative, string suffix, string doubleSuffix ) {
+    private static string Floating( double value, bool nan, bool positive, bool negative, string suffix ) {
         var type = suffix == "f" ? "float" : "double";
         if( nan )
             return type + ".NaN";
@@ -245,7 +262,7 @@ internal static class DefaultValueFormatter {
                 builder.Append( "\\v" );
                 return;
         }
-        if( char.IsControl( item ) ) {
+        if( char.IsControl( item ) || char.IsSurrogate( item ) || item == '\u2028' || item == '\u2029' ) {
             builder.Append( "\\u" ).Append( ( (int)item ).ToString( "X4", CultureInfo.InvariantCulture ) );
             return;
         }

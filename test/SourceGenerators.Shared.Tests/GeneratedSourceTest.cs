@@ -112,4 +112,174 @@ public class GeneratedSourceTest {
         var list = compilation.GetTypeByMetadataName( "System.Collections.Generic.List`1" );
         Assert.Equal( "global::System.Collections.Generic.List", GeneratedSource.FullDefinition( list ) );
     }
+
+    /// <summary>
+    /// 关键字标识符使用 @ 转义
+    /// </summary>
+    [Fact]
+    public void TestFull_EscapesKeywordIdentifiers() {
+        var compilation = TestCompilation.Create( @"namespace Sample { public class @class { } }" );
+        var type = compilation.GetTypeByMetadataName( "Sample.class" );
+        Assert.Equal( "global::Sample.@class", GeneratedSource.Full( type ) );
+    }
+
+    /// <summary>
+    /// 特殊类型使用关键字显示
+    /// </summary>
+    [Fact]
+    public void TestFull_UsesSpecialTypeKeywords() {
+        var compilation = TestCompilation.Create( "namespace Sample { public class Customer { } }" );
+        Assert.Equal( "int", GeneratedSource.Full( compilation.GetSpecialType( SpecialType.System_Int32 ) ) );
+        Assert.Equal( "void", GeneratedSource.Full( compilation.GetSpecialType( SpecialType.System_Void ) ) );
+    }
+
+    /// <summary>
+    /// 泛型定义名同样转义关键字
+    /// </summary>
+    [Fact]
+    public void TestFullDefinition_EscapesKeywordIdentifiers() {
+        var compilation = TestCompilation.Create( "namespace Sample { public class @class<T> { } }" );
+        var type = compilation.GetTypeByMetadataName( "Sample.class`1" );
+        Assert.Equal( "global::Sample.@class", GeneratedSource.FullDefinition( type ) );
+    }
+
+    /// <summary>
+    /// 嵌套泛型按导入清单缩短整条链
+    /// </summary>
+    [Fact]
+    public void TestReference_NestedGeneric_ShortensChain() {
+        var compilation = TestCompilation.Create( "namespace Lib { public class Outer<T> { public class Inner<U> { } } }" );
+        var inner = ConstructNested( compilation, "Lib.Outer`1", "Inner", SpecialType.System_Int32, SpecialType.System_String );
+        Assert.Equal( "Outer<int>.Inner<string>", GeneratedSource.Reference( inner, new[] { "Lib" } ) );
+    }
+
+    /// <summary>
+    /// 嵌套泛型未导入命名空间时仅限定头部,实参仍用短名
+    /// </summary>
+    [Fact]
+    public void TestReference_NestedGeneric_QualifiesHeadOnly() {
+        var compilation = TestCompilation.Create( "namespace Lib { public class Outer<T> { public class Inner<U> { } } }" );
+        var inner = ConstructNested( compilation, "Lib.Outer`1", "Inner", SpecialType.System_Int32, SpecialType.System_String );
+        Assert.Equal( "global::Lib.Outer<int>.Inner<string>", GeneratedSource.Reference( inner, Array.Empty<string>() ) );
+    }
+
+    /// <summary>
+    /// 泛型定义未导入时保留全限定头部,已导入时使用短名
+    /// </summary>
+    [Fact]
+    public void TestReference_Generic_ChecksDefinitionImport() {
+        var compilation = TestCompilation.Create( "namespace Sample.Domain { public class Customer { } }" );
+        var customer = compilation.GetTypeByMetadataName( "Sample.Domain.Customer" );
+        var list = compilation.GetTypeByMetadataName( "System.Collections.Generic.List`1" ).Construct( customer );
+        Assert.Equal( "global::System.Collections.Generic.List<Customer>", GeneratedSource.Reference( list, new[] { "Sample.Domain" } ) );
+        Assert.Equal( "List<Customer>", GeneratedSource.Reference( list, new[] { "System.Collections.Generic", "Sample.Domain" } ) );
+    }
+
+    /// <summary>
+    /// 可空类型输出问号形式
+    /// </summary>
+    [Fact]
+    public void TestReference_Nullable() {
+        var compilation = TestCompilation.Create( "namespace Sample { public class Customer { } }" );
+        var nullable = compilation.GetSpecialType( SpecialType.System_Nullable_T )
+            .Construct( compilation.GetSpecialType( SpecialType.System_Int32 ) );
+        Assert.Equal( "int?", GeneratedSource.Reference( nullable, Array.Empty<string>() ) );
+    }
+
+    /// <summary>
+    /// 嵌套类型链按导入清单缩短
+    /// </summary>
+    [Fact]
+    public void TestReference_NestedType_ShortensChain() {
+        var compilation = TestCompilation.Create(
+            "namespace Lib.Samples { public class OuterEntity { public class InnerEntity { } } }" );
+        var inner = compilation.GetTypeByMetadataName( "Lib.Samples.OuterEntity" ).GetTypeMembers( "InnerEntity" ).Single();
+        Assert.Equal( "OuterEntity.InnerEntity", GeneratedSource.Reference( inner, new[] { "Lib.Samples" } ) );
+        Assert.Equal( "global::Lib.Samples.OuterEntity.InnerEntity", GeneratedSource.Reference( inner, Array.Empty<string>() ) );
+    }
+
+    /// <summary>
+    /// 嵌套类型链中的关键字标识符使用 @ 转义
+    /// </summary>
+    [Fact]
+    public void TestReference_NestedType_EscapesKeywordIdentifiers() {
+        var compilation = TestCompilation.Create( "namespace Lib { public class @class { public class @int { } } }" );
+        var inner = compilation.GetTypeByMetadataName( "Lib.class" ).GetTypeMembers( "int" ).Single();
+        Assert.Equal( "@class.@int", GeneratedSource.Reference( inner, new[] { "Lib" } ) );
+    }
+
+    /// <summary>
+    /// 字符串全名支持数组后缀与泛型实参递归缩短
+    /// </summary>
+    [Fact]
+    public void TestReference_String_ArrayAndGeneric() {
+        var imports = new[] { "System.Collections.Generic", "Sample.Domain" };
+        Assert.Equal( "Customer[]", GeneratedSource.Reference( "Sample.Domain.Customer[]", imports ) );
+        Assert.Equal( "List<Customer>", GeneratedSource.Reference( "System.Collections.Generic.List<Sample.Domain.Customer>", imports ) );
+    }
+
+    /// <summary>
+    /// 字符串全名中的嵌套泛型整体缩短
+    /// </summary>
+    [Fact]
+    public void TestReference_String_NestedGeneric() {
+        Assert.Equal( "Outer<int>.Inner<string>", GeneratedSource.Reference( "Lib.Outer<int>.Inner<string>", new[] { "Lib" } ) );
+    }
+
+    /// <summary>
+    /// 未导入命名空间的字符串全名补 global:: 限定
+    /// </summary>
+    [Fact]
+    public void TestReference_String_QualifiesUnimportedNamespace() {
+        Assert.Equal( "global::Sample.Other.Customer", GeneratedSource.Reference( "Sample.Other.Customer", new[] { "Sample.Domain" } ) );
+    }
+
+    /// <summary>
+    /// System 子命名空间只有在显式导入后才使用短名
+    /// </summary>
+    [Fact]
+    public void TestReference_SystemSubNamespace_RequiresExplicitImport() {
+        var compilation = TestCompilation.Create( "namespace Sample { public class Customer { } }" );
+        var builder = compilation.GetTypeByMetadataName( "System.Text.StringBuilder" );
+        Assert.Equal( "global::System.Text.StringBuilder", GeneratedSource.Reference( builder, new[] { "System" } ) );
+        Assert.Equal( "StringBuilder", GeneratedSource.Reference( builder, new[] { "System", "System.Text" } ) );
+        Assert.Equal( "global::System.Text.StringBuilder", GeneratedSource.Reference( "System.Text.StringBuilder", new[] { "System" } ) );
+        Assert.Equal( "global::System.Collections.Generic.List<int>",
+            GeneratedSource.Reference( "System.Collections.Generic.List<int>", new[] { "System" } ) );
+    }
+
+    /// <summary>
+    /// 主体为 null 时抛出异常
+    /// </summary>
+    [Fact]
+    public void TestWrap_ThrowsOnNullInner() {
+        Assert.Throws<ArgumentNullException>( () => GeneratedSource.Wrap( null, Array.Empty<string>(), "Sample" ) );
+    }
+
+    /// <summary>
+    /// using 清单为 null 时抛出异常
+    /// </summary>
+    [Fact]
+    public void TestWrap_ThrowsOnNullImports() {
+        Assert.Throws<ArgumentNullException>( () => GeneratedSource.Wrap( "x", null, "Sample" ) );
+    }
+
+    /// <summary>
+    /// 命名空间为空时抛出异常
+    /// </summary>
+    [Fact]
+    public void TestWrap_ThrowsOnEmptyNamespace() {
+        Assert.Throws<ArgumentException>( () => GeneratedSource.Wrap( "x", Array.Empty<string>(), " " ) );
+    }
+
+    /// <summary>
+    /// 构造嵌套泛型类型符号
+    /// </summary>
+    private static INamedTypeSymbol ConstructNested( Compilation compilation, string outerName, string innerName,
+            SpecialType outerArgument, SpecialType innerArgument ) {
+        var outer = ( (INamedTypeSymbol)compilation.GetTypeByMetadataName( outerName ) )
+            .Construct( compilation.GetSpecialType( outerArgument ) );
+        var inner = outer.GetTypeMembers( innerName ).Single();
+        return inner.Construct( compilation.GetSpecialType( innerArgument ) );
+    }
 }

@@ -1,9 +1,15 @@
+using System.Runtime.CompilerServices;
+
 namespace SourceGenerators.Shared.Internal;
 
 /// <summary>
 /// 编译单元名称索引
 /// </summary>
 internal sealed class CompilationIndex : IEquatable<CompilationIndex> {
+    /// <summary>
+    /// 按编译单元缓存的索引
+    /// </summary>
+    private static readonly ConditionalWeakTable<Compilation, CompilationIndex> Cache = new ConditionalWeakTable<Compilation, CompilationIndex>();
     /// <summary>
     /// 顶层类型元数据名出现次数
     /// </summary>
@@ -38,9 +44,22 @@ internal sealed class CompilationIndex : IEquatable<CompilationIndex> {
     internal string AssemblyName => _assemblyName;
 
     /// <summary>
-    /// 构建索引
+    /// 构建索引,同一编译单元复用缓存
     /// </summary>
     internal static CompilationIndex From( Compilation compilation, CancellationToken cancellationToken = default ) {
+        if( compilation == null )
+            throw new ArgumentNullException( nameof( compilation ) );
+        cancellationToken.ThrowIfCancellationRequested();
+        if( Cache.TryGetValue( compilation, out var cached ) )
+            return cached;
+        var index = Build( compilation, cancellationToken );
+        return Cache.GetValue( compilation, _ => index );
+    }
+
+    /// <summary>
+    /// 遍历命名空间树构建索引
+    /// </summary>
+    private static CompilationIndex Build( Compilation compilation, CancellationToken cancellationToken ) {
         var typeCounts = new Dictionary<string, int>( StringComparer.Ordinal );
         var namespaceMembers = new Dictionary<string, HashSet<string>>( StringComparer.Ordinal );
         var namespaces = new HashSet<string>( StringComparer.Ordinal );
