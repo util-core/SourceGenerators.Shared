@@ -7,7 +7,7 @@
 在**源生成器项目**引用包：
 
 ```xml
-<PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.3" PrivateAssets="all" />
+<PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.4" PrivateAssets="all" />
 ```
 
 `PrivateAssets="all"` 防止该包进入生成器发布后的依赖。
@@ -39,7 +39,7 @@ SourceGenerators.Shared\Internal\TypeNameText.cs
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.3" PrivateAssets="all" />
+    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.4" PrivateAssets="all" />
   </ItemGroup>
 </Project>
 ```
@@ -101,13 +101,16 @@ public sealed class CustomerGenerator : IIncrementalGenerator {
 
 嵌套泛型会完整保留外层类型及其实参；关键字标识符输出为 `@class` 形式。`System` 的 `using` 不会自动覆盖 `System.Text` 等子命名空间，子命名空间需要显式加入框架 using 清单或由引用类型自动带入。
 
-互斥命名空间用于避免同名类型冲突，由消费方按需传入：
+命名空间冲突自动处理：候选命名空间与已导入清单存在重名顶层类型时，自动只保留先进入清单者，被排除命名空间下实际用到的简单类型生成确定性别名，其余类型保留全限定名。例如：
 
 ```csharp
-var scope = new ImportScope( compilation, frameworkImports, types, new[] { "Legacy.Helpers" } );
+// Lib.A 与 Lib.B 都有 Widget 时
+// using Lib.A;                       // 保留优先者
+// using LibBWidget = global::Lib.B.Widget;   // 被排除侧生成别名
+// Reference: Widget / LibBWidget
 ```
 
-多个互斥命名空间之间采用“先进入清单者优先”的策略，后续冲突项直接忽略，相关类型由 `Reference` 保留必要的全限定头部。
+别名只覆盖简单类型名；泛型与嵌套类型在被排除命名空间下仍输出 `global::` 全限定名。框架 using 清单由调用方负责，内部即使存在重名类型也原样保留。
 
 ### GeneratedSource
 

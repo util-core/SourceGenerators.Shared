@@ -119,6 +119,32 @@ internal sealed class CompilationIndex : IEquatable<CompilationIndex> {
         return _namespaceMembers.TryGetValue( namespaceName, out var members ) && members.Contains( metadataName );
     }
 
+    /// <summary>
+    /// 取命名空间下的全部顶层类型元数据名
+    /// </summary>
+    internal IReadOnlyCollection<string> GetNamespaceMembers( string namespaceName ) {
+        if( namespaceName != null && _namespaceMembers.TryGetValue( namespaceName, out var members ) )
+            return members;
+        return Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// 取多个命名空间之间重复的顶层类型元数据名,按名称排序
+    /// </summary>
+    internal string[] GetConflictingNames( IEnumerable<string> namespaceNames ) {
+        var counts = new Dictionary<string, int>( StringComparer.Ordinal );
+        foreach( var namespaceName in namespaceNames ) {
+            if( namespaceName == null )
+                continue;
+            foreach( var member in GetNamespaceMembers( namespaceName ) ) {
+                counts.TryGetValue( member, out var count );
+                counts[member] = count + 1;
+            }
+        }
+        return counts.Where( pair => pair.Value > 1 ).Select( pair => pair.Key )
+            .OrderBy( name => name, StringComparer.Ordinal ).ToArray();
+    }
+
     /// <inheritdoc/>
     public bool Equals( CompilationIndex other ) {
         if( other == null )

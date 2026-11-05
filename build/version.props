@@ -5,7 +5,7 @@
 		<VersionMinor>0</VersionMinor>
 		<VersionPatch>0</VersionPatch>
 		<VersionPrefix>$(VersionMajor).$(VersionMinor).$(VersionPatch)</VersionPrefix>
-		<VersionSuffix>preview.3</VersionSuffix>
+		<VersionSuffix>preview.4</VersionSuffix>
 	</PropertyGroup>
 
 </Project>

@@ -9,10 +9,6 @@ internal sealed class ImportScope {
     /// </summary>
     private readonly HashSet<string> _ambiguousNames;
     /// <summary>
-    /// 互斥命名空间,先进入清单者优先
-    /// </summary>
-    private readonly HashSet<string> _conflictingNamespaces;
-    /// <summary>
     /// 产物using清单
     /// </summary>
     private readonly string[] _imports;
@@ -24,27 +20,33 @@ internal sealed class ImportScope {
     /// 名称探测索引
     /// </summary>
     private readonly CompilationIndex _index;
+    /// <summary>
+    /// 被排除命名空间的类型全限定名到别名
+    /// </summary>
+    private readonly Dictionary<string, string> _aliases;
+    /// <summary>
+    /// 供产物写入的导入清单,含别名声明
+    /// </summary>
+    private readonly string[] _declaredImports;
 
     /// <summary>
     /// 按类型符号建域
     /// </summary>
-    internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<ITypeSymbol> types,
-            IEnumerable<string> conflictingNamespaces = null )
-        : this( CreateIndex( compilation ), frameworkImports, types, conflictingNamespaces ) {
+    internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<ITypeSymbol> types )
+        : this( CreateIndex( compilation ), frameworkImports, types ) {
         _compilation = compilation;
     }
 
     /// <summary>
     /// 按类型符号建域,名称探测走索引
     /// </summary>
-    internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<ITypeSymbol> types,
-            IEnumerable<string> conflictingNamespaces = null ) {
+    internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<ITypeSymbol> types ) {
         _index = RequireIndex( index );
         RequireImports( frameworkImports );
         if( types == null )
             throw new ArgumentNullException( nameof( types ) );
         _ambiguousNames = new HashSet<string>( StringComparer.Ordinal );
-        _conflictingNamespaces = CreateConflictSet( conflictingNamespaces );
+        _aliases = new Dictionary<string, string>( StringComparer.Ordinal );
         var shortNames = new Dictionary<string, SortedSet<string>>( StringComparer.Ordinal );
         foreach( var type in Flatten( types ) ) {
             if( type == null )
@@ -53,8 +55,6 @@ internal sealed class ImportScope {
             if( namespaceName == null || namespaceName.IsGlobalNamespace )
                 continue;
             var owner = namespaceName.ToDisplayString();
-            if( frameworkImports.Contains( owner, StringComparer.Ordinal ) )
-                continue;
             var metadataName = ResolvingName( type );
             if( shortNames.TryGetValue( metadataName, out var owners ) == false ) {
                 owners = new SortedSet<string>( StringComparer.Ordinal );
@@ -62,29 +62,28 @@ internal sealed class ImportScope {
             }
             owners.Add( owner );
         }
-        _imports = Build( index, frameworkImports, shortNames, _ambiguousNames, _conflictingNamespaces );
+        _imports = Build( index, frameworkImports, shortNames, _ambiguousNames, _aliases );
+        _declaredImports = ComposeImports( _imports, _aliases );
     }
 
     /// <summary>
     /// 按全限定名建域
     /// </summary>
-    internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<string> fullNames,
-            IEnumerable<string> conflictingNamespaces = null )
-        : this( CreateIndex( compilation ), frameworkImports, fullNames, conflictingNamespaces ) {
+    internal ImportScope( Compilation compilation, string[] frameworkImports, IEnumerable<string> fullNames )
+        : this( CreateIndex( compilation ), frameworkImports, fullNames ) {
         _compilation = compilation;
     }
 
     /// <summary>
     /// 按全限定名建域,名称探测走索引
     /// </summary>
-    internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<string> fullNames,
-            IEnumerable<string> conflictingNamespaces = null ) {
+    internal ImportScope( CompilationIndex index, string[] frameworkImports, IEnumerable<string> fullNames ) {
         _index = RequireIndex( index );
         RequireImports( frameworkImports );
         if( fullNames == null )
             throw new ArgumentNullException( nameof( fullNames ) );
         _ambiguousNames = new HashSet<string>( StringComparer.Ordinal );
-        _conflictingNamespaces = CreateConflictSet( conflictingNamespaces );
+        _aliases = new Dictionary<string, string>( StringComparer.Ordinal );
         var shortNames = new Dictionary<string, SortedSet<string>>( StringComparer.Ordinal );
         foreach( var segment in Flatten( fullNames ) ) {
             var ( owner, metadataName ) = Split( segment );
@@ -97,15 +96,14 @@ internal sealed class ImportScope {
                 owner = nested.Value.Owner;
                 metadataName = nested.Value.Id;
             }
-            if( frameworkImports.Contains( owner, StringComparer.Ordinal ) )
-                continue;
             if( shortNames.TryGetValue( metadataName, out var owners ) == false ) {
                 owners = new SortedSet<string>( StringComparer.Ordinal );
                 shortNames.Add( metadataName, owners );
             }
             owners.Add( owner );
         }
-        _imports = Build( index, frameworkImports, shortNames, _ambiguousNames, _conflictingNamespaces );
+        _imports = Build( index, frameworkImports, shortNames, _ambiguousNames, _aliases );
+        _declaredImports = ComposeImports( _imports, _aliases );
     }
 
     /// <summary>
@@ -116,16 +114,7 @@ internal sealed class ImportScope {
     /// <summary>
     /// 产物using清单
     /// </summary>
-    internal string[] Imports => _imports;
-
-    /// <summary>
-    /// 构建互斥命名空间集合
-    /// </summary>
-    private static HashSet<string> CreateConflictSet( IEnumerable<string> conflictingNamespaces ) {
-        if( conflictingNamespaces == null )
-            return new HashSet<string>( StringComparer.Ordinal );
-        return new HashSet<string>( conflictingNamespaces, StringComparer.Ordinal );
-    }
+    internal string[] Imports => _declaredImports;
 
     /// <summary>
     /// 创建名称索引,编译单元不能为空
@@ -189,56 +178,109 @@ internal sealed class ImportScope {
     }
 
     /// <summary>
-    /// 加入框架与业务命名空间,歧义短名保留全限定名
+    /// 加入框架清单与业务命名空间,自动排除有重名类型的业务命名空间
     /// </summary>
     private static string[] Build( CompilationIndex index, string[] frameworkImports, Dictionary<string, SortedSet<string>> shortNames,
-            HashSet<string> ambiguousNames, HashSet<string> conflictingNamespaces ) {
+            HashSet<string> ambiguousNames, Dictionary<string, string> aliases ) {
+        var candidates = new SortedSet<string>( StringComparer.Ordinal );
+        foreach( var pair in shortNames )
+            foreach( var owner in pair.Value )
+                candidates.Add( owner );
         var list = new List<string>( frameworkImports.Length );
         foreach( var name in frameworkImports )
-            Add( list, name, conflictingNamespaces );
-        foreach( var pair in shortNames ) {
-            if( pair.Value.Count > 1 || ExistsInFramework( index, frameworkImports, pair.Key ) ) {
-                ambiguousNames.Add( pair.Key );
+            Add( list, name );
+        var excluded = new HashSet<string>( StringComparer.Ordinal );
+        foreach( var owner in candidates ) {
+            if( list.Contains( owner, StringComparer.Ordinal ) )
+                continue;
+            if( HasNameConflict( index, list, owner ) ) {
+                excluded.Add( owner );
                 continue;
             }
-            foreach( var owner in pair.Value )
-                Add( list, owner, conflictingNamespaces );
+            list.Add( owner );
         }
+        foreach( var name in index.GetConflictingNames( list ) )
+            ambiguousNames.Add( name );
+        AddAliases( index, list, shortNames, excluded, aliases );
         return list.ToArray();
     }
 
     /// <summary>
-    /// 追加命名空间,重复与冲突项忽略
+    /// 追加命名空间,重复项忽略
     /// </summary>
-    private static void Add( List<string> list, string namespaceName, HashSet<string> conflictingNamespaces ) {
+    private static void Add( List<string> list, string namespaceName ) {
         if( namespaceName == null || list.Contains( namespaceName, StringComparer.Ordinal ) )
-            return;
-        if( Conflicts( list, namespaceName, conflictingNamespaces ) )
             return;
         list.Add( namespaceName );
     }
 
     /// <summary>
-    /// 是否与清单内已有命名空间互斥
+    /// 候选命名空间与已导入清单是否存在重名顶层类型
     /// </summary>
-    private static bool Conflicts( List<string> list, string namespaceName, HashSet<string> conflictingNamespaces ) {
-        if( conflictingNamespaces == null || conflictingNamespaces.Contains( namespaceName ) == false )
-            return false;
-        foreach( var existing in list ) {
-            if( conflictingNamespaces.Contains( existing ) )
-                return true;
-        }
+    private static bool HasNameConflict( CompilationIndex index, List<string> imported, string namespaceName ) {
+        foreach( var member in index.GetNamespaceMembers( namespaceName ) )
+            foreach( var existing in imported )
+                if( index.HasNamespaceMember( existing, member ) )
+                    return true;
         return false;
     }
 
     /// <summary>
-    /// 框架命名空间下是否已存在同名类型
+    /// 为被排除命名空间下的简单类型分配确定性别名
     /// </summary>
-    private static bool ExistsInFramework( CompilationIndex index, string[] frameworkImports, string metadataName ) {
-        foreach( var imported in frameworkImports )
-            if( index.TypeExists( $"{imported}.{metadataName}" ) )
+    private static void AddAliases( CompilationIndex index, List<string> imported, Dictionary<string, SortedSet<string>> shortNames,
+            HashSet<string> excluded, Dictionary<string, string> aliases ) {
+        var used = new HashSet<string>( StringComparer.Ordinal );
+        foreach( var pair in shortNames.OrderBy( item => item.Key, StringComparer.Ordinal ) ) {
+            if( IsSimpleName( pair.Key ) == false )
+                continue;
+            foreach( var owner in pair.Value ) {
+                if( excluded.Contains( owner ) == false || index.HasNamespaceMember( owner, pair.Key ) == false )
+                    continue;
+                aliases[owner + "." + pair.Key] = AllocateAlias( index, imported, used, owner, pair.Key );
+            }
+        }
+    }
+
+    /// <summary>
+    /// 类型名是否可用别名表达
+    /// </summary>
+    private static bool IsSimpleName( string metadataName ) {
+        return metadataName.Contains( "`" ) == false && metadataName.Contains( "<" ) == false
+            && metadataName.Contains( "[" ) == false && metadataName.Contains( "." ) == false;
+    }
+
+    /// <summary>
+    /// 分配不与已导入类型重名的别名
+    /// </summary>
+    private static string AllocateAlias( CompilationIndex index, List<string> imported, HashSet<string> used,
+            string owner, string metadataName ) {
+        var baseName = owner.Replace( ".", string.Empty ) + metadataName;
+        var candidate = baseName;
+        for( var suffix = 2; used.Contains( candidate ) || IsNameTaken( index, imported, candidate ); suffix++ )
+            candidate = baseName + "_" + suffix.ToString( CultureInfo.InvariantCulture );
+        used.Add( candidate );
+        return candidate;
+    }
+
+    /// <summary>
+    /// 名称是否已被已导入命名空间下的类型占用
+    /// </summary>
+    private static bool IsNameTaken( CompilationIndex index, List<string> imported, string name ) {
+        foreach( var namespaceName in imported )
+            if( index.HasNamespaceMember( namespaceName, name ) )
                 return true;
         return false;
+    }
+
+    /// <summary>
+    /// 组合命名空间清单与别名声明供产物写入
+    /// </summary>
+    private static string[] ComposeImports( string[] imports, Dictionary<string, string> aliases ) {
+        var result = new List<string>( imports );
+        foreach( var pair in aliases.OrderBy( item => item.Value, StringComparer.Ordinal ) )
+            result.Add( pair.Value + " = global::" + pair.Key );
+        return result.ToArray();
     }
 
     /// <summary>
@@ -342,6 +384,8 @@ internal sealed class ImportScope {
     internal string Reference( ITypeSymbol type ) {
         if( type == null )
             throw new ArgumentNullException( nameof( type ) );
+        if( _aliases.TryGetValue( TypeNameText.StripGlobal( GeneratedSource.Full( type ) ), out var alias ) )
+            return alias;
         if( type is IArrayTypeSymbol array )
             return Reference( array.ElementType ) + TypeNameText.ArraySuffix( array.Rank );
         if( type is not INamedTypeSymbol named )
@@ -453,6 +497,8 @@ internal sealed class ImportScope {
     /// 单个类型段短名化,未导入或有歧义时补 global:: 限定
     /// </summary>
     private string ReferenceCore( string segment ) {
+        if( _aliases.TryGetValue( segment, out var alias ) )
+            return alias;
         var ( owner, metadataName ) = Split( segment );
         if( owner == null )
             return segment;

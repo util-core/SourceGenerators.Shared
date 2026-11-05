@@ -5,6 +5,13 @@ namespace SourceGenerators.Shared.Tests;
 /// </summary>
 public class ImportScopeTest {
     /// <summary>
+    /// 冲突命名空间桩源码
+    /// </summary>
+    private const string ConflictSource = @"
+namespace Lib.A { public class Widget { } public class HelperA { } }
+namespace Lib.B { public class Widget { } public class HelperB { } }";
+
+    /// <summary>
     /// 已导入命名空间的类型用短名
     /// </summary>
     [Fact]
@@ -17,18 +24,30 @@ public class ImportScopeTest {
     }
 
     /// <summary>
-    /// 互斥命名空间只保留先进入者,另一命名空间的类型保留全限定名
+    /// 无重名类型的命名空间不互斥,全部保留
     /// </summary>
     [Fact]
-    public void TestReference_HonorsConflictingNamespaces() {
+    public void TestImports_IndependentNamespaces_AreBothImported() {
         var compilation = TestCompilation.Create( @"namespace Sample.A { public class A { } } namespace Sample.B { public class B { } }" );
         var a = compilation.GetTypeByMetadataName( "Sample.A.A" );
         var b = compilation.GetTypeByMetadataName( "Sample.B.B" );
-        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b }, new[] { "Sample.A", "Sample.B" } );
-        Assert.Single( scope.Imports, name => name == "Sample.A" || name == "Sample.B" );
-        var imported = scope.Imports.Single( name => name == "Sample.A" || name == "Sample.B" );
-        var skipped = imported == "Sample.A" ? b : a;
-        Assert.StartsWith( "global::", scope.Reference( skipped ) );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Contains( "Sample.A", scope.Imports );
+        Assert.Contains( "Sample.B", scope.Imports );
+        Assert.DoesNotContain( scope.Imports, item => item.Contains( " = " ) );
+        Assert.Equal( "A", scope.Reference( a ) );
+        Assert.Equal( "B", scope.Reference( b ) );
+    }
+
+    /// <summary>
+    /// 构造签名只保留编译单元、框架清单与类型清单三个参数
+    /// </summary>
+    [Fact]
+    public void TestConstructor_NoConflictingNamespacesParameter() {
+        var constructors = typeof( ImportScope ).GetConstructors( System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic );
+        Assert.NotEmpty( constructors );
+        Assert.All( constructors, item => Assert.Equal( 3, item.GetParameters().Length ) );
     }
 
     /// <summary>
@@ -44,37 +63,37 @@ public class ImportScopeTest {
     }
 
     /// <summary>
-    /// 两个命名空间的嵌套链首段同名时保留全限定名
+    /// 两个命名空间的嵌套链首段同名时保留优先命名空间,被排除侧保留全限定名
     /// </summary>
     [Fact]
-    public void TestReference_NestedType_SameOuterName_Qualified() {
+    public void TestReference_NestedType_SameOuterName_KeepsPreferredNamespace() {
         var compilation = TestCompilation.Create(
             @"namespace Lib.Conflict.A { public class Wrapper { public class Item { } } }",
             @"namespace Lib.Conflict.B { public class Wrapper { public class Item { } } }" );
         var a = GetNestedType( compilation, "Lib.Conflict.A.Wrapper", "Item" );
         var b = GetNestedType( compilation, "Lib.Conflict.B.Wrapper", "Item" );
         var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
-        Assert.DoesNotContain( "Lib.Conflict.A", scope.Imports );
+        Assert.Contains( "Lib.Conflict.A", scope.Imports );
         Assert.DoesNotContain( "Lib.Conflict.B", scope.Imports );
-        Assert.Equal( "global::Lib.Conflict.A.Wrapper.Item", scope.Reference( a ) );
+        Assert.Equal( "Wrapper.Item", scope.Reference( a ) );
         Assert.Equal( "global::Lib.Conflict.B.Wrapper.Item", scope.Reference( b ) );
     }
 
     /// <summary>
-    /// 嵌套链首段与已导入命名空间的顶层类型同名时保留全限定名
+    /// 嵌套链首段与顶层类型同名时保留优先命名空间,被排除侧使用别名
     /// </summary>
     [Fact]
-    public void TestReference_NestedType_OuterNameCollidesTopLevel_Qualified() {
+    public void TestReference_NestedType_OuterNameCollidesTopLevel_UsesAlias() {
         var compilation = TestCompilation.Create(
             @"namespace Lib.Samples { public class OuterEntity { public class InnerEntity { } } }",
             @"namespace Sample.Isolated { public class OuterEntity { } }" );
         var inner = GetNestedType( compilation, "Lib.Samples.OuterEntity", "InnerEntity" );
         var top = compilation.GetTypeByMetadataName( "Sample.Isolated.OuterEntity" );
         var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { inner, top } );
-        Assert.DoesNotContain( "Lib.Samples", scope.Imports );
+        Assert.Contains( "Lib.Samples", scope.Imports );
         Assert.DoesNotContain( "Sample.Isolated", scope.Imports );
-        Assert.Equal( "global::Lib.Samples.OuterEntity.InnerEntity", scope.Reference( inner ) );
-        Assert.Equal( "global::Sample.Isolated.OuterEntity", scope.Reference( top ) );
+        Assert.Equal( "OuterEntity.InnerEntity", scope.Reference( inner ) );
+        Assert.Equal( "SampleIsolatedOuterEntity", scope.Reference( top ) );
     }
 
     /// <summary>
@@ -162,19 +181,19 @@ public class ImportScopeTest {
     }
 
     /// <summary>
-    /// 外层类型歧义时仅限定头部,类型实参仍缩短
+    /// 外层泛型歧义时保留优先命名空间,被排除侧保留全限定名且不生成别名
     /// </summary>
     [Fact]
-    public void TestReference_NestedGeneric_AmbiguousOuter_QualifiesHeadOnly() {
+    public void TestReference_NestedGeneric_AmbiguousOuter_KeepsPreferredNamespace() {
         var compilation = TestCompilation.Create(
             @"namespace Lib.A { public class Outer<T> { public class Inner<U> { } } }",
             @"namespace Lib.B { public class Outer<T> { public class Inner<U> { } } }" );
         var a = ConstructNested( compilation, "Lib.A.Outer`1", "Inner", SpecialType.System_Int32, SpecialType.System_String );
         var b = ConstructNested( compilation, "Lib.B.Outer`1", "Inner", SpecialType.System_Int32, SpecialType.System_String );
         var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
-        Assert.DoesNotContain( "Lib.A", scope.Imports );
+        Assert.Contains( "Lib.A", scope.Imports );
         Assert.DoesNotContain( "Lib.B", scope.Imports );
-        Assert.Equal( "global::Lib.A.Outer<int>.Inner<string>", scope.Reference( a ) );
+        Assert.Equal( "Outer<int>.Inner<string>", scope.Reference( a ) );
         Assert.Equal( "global::Lib.B.Outer<int>.Inner<string>", scope.Reference( b ) );
     }
 
@@ -269,32 +288,34 @@ public class ImportScopeTest {
     }
 
     /// <summary>
-    /// 与框架命名空间同名时保留全限定名
+    /// 与框架命名空间同名时排除业务命名空间并使用别名
     /// </summary>
     [Fact]
-    public void TestReference_FrameworkNameCollision_Qualified() {
+    public void TestReference_FrameworkNameCollision_UsesAlias() {
         var compilation = TestCompilation.Create( "namespace Sample { public class Object { } }" );
         var type = compilation.GetTypeByMetadataName( "Sample.Object" );
         var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { type } );
         Assert.DoesNotContain( "Sample", scope.Imports );
-        Assert.Equal( "global::Sample.Object", scope.Reference( type ) );
+        Assert.Contains( "SampleObject = global::Sample.Object", scope.Imports );
+        Assert.Equal( "SampleObject", scope.Reference( type ) );
     }
 
     /// <summary>
-    /// 跨命名空间顶层同名类型保留全限定名
+    /// 跨命名空间顶层同名类型保留优先者,被排除侧使用别名
     /// </summary>
     [Fact]
-    public void TestReference_TopLevelNameConflict_Qualified() {
+    public void TestReference_TopLevelNameConflict_UsesAlias() {
         var compilation = TestCompilation.Create(
             @"namespace Sample.A { public class Customer { } }",
             @"namespace Sample.B { public class Customer { } }" );
         var a = compilation.GetTypeByMetadataName( "Sample.A.Customer" );
         var b = compilation.GetTypeByMetadataName( "Sample.B.Customer" );
         var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
-        Assert.DoesNotContain( "Sample.A", scope.Imports );
+        Assert.Contains( "Sample.A", scope.Imports );
         Assert.DoesNotContain( "Sample.B", scope.Imports );
-        Assert.Equal( "global::Sample.A.Customer", scope.Reference( a ) );
-        Assert.Equal( "global::Sample.B.Customer", scope.Reference( b ) );
+        Assert.Contains( "SampleBCustomer = global::Sample.B.Customer", scope.Imports );
+        Assert.Equal( "Customer", scope.Reference( a ) );
+        Assert.Equal( "SampleBCustomer", scope.Reference( b ) );
     }
 
     /// <summary>
@@ -335,4 +356,129 @@ public class ImportScopeTest {
         Assert.Throws<ArgumentNullException>( () =>
             new ImportScope( compilation, null, new ITypeSymbol[0] ) );
     }
+
+    /// <summary>
+    /// 有同名类型的业务命名空间自动只保留优先者
+    /// </summary>
+    [Fact]
+    public void TestImports_AutoExcludesConflictingNamespace() {
+        var compilation = TestCompilation.Create( ConflictSource );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Contains( "Lib.A", scope.Imports );
+        Assert.DoesNotContain( "Lib.B", scope.Imports );
+    }
+
+    /// <summary>
+    /// 框架清单由调用方负责,内部有重名类型也全部保留且不生成别名
+    /// </summary>
+    [Fact]
+    public void TestImports_FrameworkImports_ArePreserved() {
+        var compilation = TestCompilation.Create( @"namespace Lib.Framework { public class Object { } }" );
+        var type = compilation.GetTypeByMetadataName( "Lib.Framework.Object" );
+        var scope = new ImportScope( compilation, new[] { "System", "Lib.Framework" }, new ITypeSymbol[] { type } );
+        Assert.Contains( "System", scope.Imports );
+        Assert.Contains( "Lib.Framework", scope.Imports );
+        Assert.DoesNotContain( scope.Imports, item => item.Contains( " = " ) );
+    }
+
+    /// <summary>
+    /// 被排除命名空间的已用类型生成别名声明
+    /// </summary>
+    [Fact]
+    public void TestAliases_GeneratedForExcludedType() {
+        var compilation = TestCompilation.Create( ConflictSource );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Contains( scope.Imports, item => item == "LibBWidget = global::Lib.B.Widget" );
+    }
+
+    /// <summary>
+    /// 被排除侧引用使用别名短名,保留侧使用原始短名
+    /// </summary>
+    [Fact]
+    public void TestReference_UsesAliasAndShortName() {
+        var compilation = TestCompilation.Create( ConflictSource );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Equal( "Widget", scope.Reference( a ) );
+        Assert.Equal( "LibBWidget", scope.Reference( b ) );
+    }
+
+    /// <summary>
+    /// 别名名与已导入命名空间的类型重名时追加序号
+    /// </summary>
+    [Fact]
+    public void TestAlias_NamingCollision_AppendsIndex() {
+        const string source = @"
+namespace Lib.A { public class Widget { } public class LibBWidget { } }
+namespace Lib.B { public class Widget { } }";
+        var compilation = TestCompilation.Create( source );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Contains( scope.Imports, item => item == "LibBWidget_2 = global::Lib.B.Widget" );
+    }
+
+    /// <summary>
+    /// 泛型与数组类型不生成别名,保留全限定名
+    /// </summary>
+    [Fact]
+    public void TestAlias_ComplexType_FallsBackToQualified() {
+        var compilation = TestCompilation.Create( @"
+namespace Lib.A { public class Widget { } }
+namespace Lib.B { public class Widget { } public class Box<T> { } }" );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" },
+            new[] { "Lib.A.Widget", "Lib.B.Widget", "Lib.B.Box<Lib.B.Widget>" } );
+        Assert.DoesNotContain( scope.Imports, item => item.Contains( "Box" ) );
+        Assert.StartsWith( "global::", scope.Reference( "Lib.B.Box<Lib.B.Widget>" ) );
+    }
+
+    /// <summary>
+    /// 无冲突时不生成别名
+    /// </summary>
+    [Fact]
+    public void TestImports_NoConflict_NoAlias() {
+        var compilation = TestCompilation.Create( @"namespace Lib.A { public class HelperA { } }" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new[] { "Lib.A.HelperA" } );
+        Assert.Contains( "Lib.A", scope.Imports );
+        Assert.DoesNotContain( scope.Imports, item => item.Contains( " = " ) );
+    }
+
+    /// <summary>
+    /// 导入清单与别名顺序跨构造确定
+    /// </summary>
+    [Fact]
+    public void TestImports_Deterministic() {
+        var compilation = TestCompilation.Create( ConflictSource );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var left = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { b, a } );
+        var right = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        Assert.Equal( left.Imports, right.Imports );
+    }
+
+    /// <summary>
+    /// 冲突命名空间的别名声明与短名引用可直接编译
+    /// </summary>
+    [Fact]
+    public void TestReference_ConflictingNamespaces_OutputCompiles() {
+        var compilation = TestCompilation.Create( ConflictSource );
+        var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { a, b } );
+        var body = "internal static class Probe { public static " + scope.Reference( a ) + " A; public static "
+            + scope.Reference( b ) + " B; }";
+        var text = GeneratedSource.Wrap( body, scope.Imports, "Probe.Generated" );
+        var generated = compilation.AddSyntaxTrees( CSharpSyntaxTree.ParseText( text,
+            new CSharpParseOptions( LanguageVersion.CSharp10 ), cancellationToken: TestContext.Current.CancellationToken ) );
+        Assert.DoesNotContain( generated.GetDiagnostics( TestContext.Current.CancellationToken ),
+            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error );
+    }
+
 }

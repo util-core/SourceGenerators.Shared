@@ -284,6 +284,16 @@ public class GeneratedSourceTest {
     }
 
     /// <summary>
+    /// using 清单可包含别名声明
+    /// </summary>
+    [Fact]
+    public void TestAppendImports_WritesAlias() {
+        var builder = new StringBuilder();
+        GeneratedSource.AppendImports( builder, new[] { "System", "LibBWidget = global::Lib.B.Widget" } );
+        Assert.Contains( "using LibBWidget = global::Lib.B.Widget;", builder.ToString() );
+    }
+
+    /// <summary>
     /// 构造嵌套泛型类型符号
     /// </summary>
     private static INamedTypeSymbol ConstructNested( Compilation compilation, string outerName, string innerName,

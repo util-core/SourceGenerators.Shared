@@ -138,4 +138,40 @@ public class CompilationIndexTest {
         Assert.False( left.Equals( new object() ) );
         Assert.NotEqual( left, right );
     }
+
+    /// <summary>
+    /// 多命名空间重名短名按名称排序返回
+    /// </summary>
+    [Fact]
+    public void TestGetConflictingNames_TwoNamespaces() {
+        const string source = @"
+namespace Lib.A { public class Widget { } public class Gadget { } public class OnlyA { } }
+namespace Lib.B { public class Widget { } public class Gadget { } public class OnlyB { } }";
+        var index = CompilationIndex.From( TestCompilation.Create( source ), TestContext.Current.CancellationToken );
+        Assert.Equal( new[] { "Gadget", "Widget" }, index.GetConflictingNames( new[] { "Lib.A", "Lib.B" } ) );
+    }
+
+    /// <summary>
+    /// 泛型 arity 不同的同名类型不算冲突
+    /// </summary>
+    [Fact]
+    public void TestGetConflictingNames_DifferentArity() {
+        const string source = @"
+namespace Lib.A { public class Box { } }
+namespace Lib.B { public class Box<T> { } }";
+        var index = CompilationIndex.From( TestCompilation.Create( source ), TestContext.Current.CancellationToken );
+        Assert.Empty( index.GetConflictingNames( new[] { "Lib.A", "Lib.B" } ) );
+    }
+
+    /// <summary>
+    /// 空命名空间与未索引命名空间不参与冲突计算
+    /// </summary>
+    [Fact]
+    public void TestGetConflictingNames_NullAndUnknownNamespace() {
+        var index = CompilationIndex.From( TestCompilation.Create( @"namespace Lib.A { public class Widget { } }" ),
+            TestContext.Current.CancellationToken );
+        Assert.Empty( index.GetConflictingNames( new[] { "Lib.A", null, "Unknown" } ) );
+        Assert.Empty( index.GetNamespaceMembers( "Unknown" ) );
+        Assert.Empty( index.GetNamespaceMembers( null ) );
+    }
 }
