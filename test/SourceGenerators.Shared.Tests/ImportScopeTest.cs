@@ -106,6 +106,20 @@ public class ImportScopeTest {
     }
 
     /// <summary>
+    /// 多维数组引用按维数补逗号,交错数组逐层保留方括号
+    /// </summary>
+    [Fact]
+    public void TestReference_MultidimensionalArray() {
+        var compilation = TestCompilation.Create( @"namespace Sample.Domain { public class Customer { } }" );
+        var customer = compilation.GetTypeByMetadataName( "Sample.Domain.Customer" );
+        var multi = compilation.CreateArrayTypeSymbol( customer, 2 );
+        var jagged = compilation.CreateArrayTypeSymbol( compilation.CreateArrayTypeSymbol( customer ), 1 );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { multi, jagged } );
+        Assert.Equal( "Customer[,]", scope.Reference( multi ) );
+        Assert.Equal( "Customer[][]", scope.Reference( jagged ) );
+    }
+
+    /// <summary>
     /// 未参与建域的类型已导入时用短名,否则保留全限定名
     /// </summary>
     [Fact]

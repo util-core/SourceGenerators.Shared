@@ -19,6 +19,13 @@ internal static class TypeNameText {
     }
 
     /// <summary>
+    /// 按维数生成数组后缀,一维为[],多维按维数补逗号
+    /// </summary>
+    internal static string ArraySuffix( int rank ) {
+        return rank <= 1 ? "[]" : "[" + new string( ',', rank - 1 ) + "]";
+    }
+
+    /// <summary>
     /// 分离数组后缀,返回核心类型名
     /// </summary>
     internal static string SplitArraySuffix( string text, out string suffix ) {

@@ -15,6 +15,16 @@ public class TypeNameTextTest {
     }
 
     /// <summary>
+    /// 数组后缀按维数生成,一维为[]多维补逗号
+    /// </summary>
+    [Fact]
+    public void TestArraySuffix() {
+        Assert.Equal( "[]", TypeNameText.ArraySuffix( 1 ) );
+        Assert.Equal( "[,]", TypeNameText.ArraySuffix( 2 ) );
+        Assert.Equal( "[,,]", TypeNameText.ArraySuffix( 3 ) );
+    }
+
+    /// <summary>
     /// 分离多层数组后缀
     /// </summary>
     [Fact]

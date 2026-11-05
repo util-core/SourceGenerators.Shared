@@ -114,7 +114,7 @@ internal static class GeneratedSource {
         if( imports == null )
             throw new ArgumentNullException( nameof( imports ) );
         if( type is IArrayTypeSymbol array )
-            return Reference( array.ElementType, imports ) + "[]";
+            return Reference( array.ElementType, imports ) + TypeNameText.ArraySuffix( array.Rank );
         if( type is not INamedTypeSymbol named )
             return Full( type );
         if( IsNullable( named ) )

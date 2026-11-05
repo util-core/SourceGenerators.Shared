@@ -94,6 +94,17 @@ public class GeneratedSourceTest {
     }
 
     /// <summary>
+    /// 多维数组元素按导入清单短名化并保留维数
+    /// </summary>
+    [Fact]
+    public void TestReference_MultidimensionalArray() {
+        var compilation = TestCompilation.Create( @"namespace Sample.Domain { public class Customer { } }" );
+        var type = compilation.GetTypeByMetadataName( "Sample.Domain.Customer" );
+        var multi = compilation.CreateArrayTypeSymbol( type, 2 );
+        Assert.Equal( "Customer[,]", GeneratedSource.Reference( multi, new[] { "Sample.Domain" } ) );
+    }
+
+    /// <summary>
     /// 完整类型名使用 global:: 限定
     /// </summary>
     [Fact]

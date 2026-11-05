@@ -343,7 +343,7 @@ internal sealed class ImportScope {
         if( type == null )
             throw new ArgumentNullException( nameof( type ) );
         if( type is IArrayTypeSymbol array )
-            return Reference( array.ElementType ) + "[]";
+            return Reference( array.ElementType ) + TypeNameText.ArraySuffix( array.Rank );
         if( type is not INamedTypeSymbol named )
             return GeneratedSource.Full( type );
         if( IsNullable( named ) )
