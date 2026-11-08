@@ -40,14 +40,15 @@ namespace Lib.B { public class Widget { } public class HelperB { } }";
     }
 
     /// <summary>
-    /// 构造签名只保留编译单元、框架清单与类型清单三个参数
+    /// 对外构造签名只保留编译单元、框架清单与类型清单三个参数,私有派生构造固定为作用域与文件命名空间两参
     /// </summary>
     [Fact]
     public void TestConstructor_NoConflictingNamespacesParameter() {
         var constructors = typeof( ImportScope ).GetConstructors( System.Reflection.BindingFlags.Instance
             | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic );
         Assert.NotEmpty( constructors );
-        Assert.All( constructors, item => Assert.Equal( 3, item.GetParameters().Length ) );
+        Assert.All( constructors.Where( item => item.IsPrivate == false ), item => Assert.Equal( 3, item.GetParameters().Length ) );
+        Assert.All( constructors.Where( item => item.IsPrivate ), item => Assert.Equal( 2, item.GetParameters().Length ) );
     }
 
     /// <summary>
@@ -480,5 +481,87 @@ namespace Lib.B { public class Widget { } public class Box<T> { } }" );
         Assert.DoesNotContain( generated.GetDiagnostics( TestContext.Current.CancellationToken ),
             diagnostic => diagnostic.Severity == DiagnosticSeverity.Error );
     }
+
+    #region 文件命名空间遮蔽
+
+    /// <summary>
+    /// 文件命名空间遮蔽桩源码,CallSiteAop命名空间被导入,Sample命名空间因同名类型被排除出导入清单
+    /// </summary>
+    private const string ShadowSource = @"
+namespace CallSiteAop { public class MethodInterceptionContext { } }
+namespace Sample { public class Widget { } public class MethodInterceptionContext { } }";
+
+    /// <summary>
+    /// 测试文件命名空间遮蔽 - 产物文件所在命名空间声明同名类型时,已导入短名须回退全限定
+    /// </summary>
+    [Fact]
+    public void TestForFile_ShadowedInFileNamespace_Qualifies() {
+        var compilation = TestCompilation.Create( ShadowSource );
+        var context = compilation.GetTypeByMetadataName( "CallSiteAop.MethodInterceptionContext" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { context } ).ForFile( "Sample" );
+        Assert.Equal( "global::CallSiteAop.MethodInterceptionContext", scope.Reference( "CallSiteAop.MethodInterceptionContext" ) );
+    }
+
+    /// <summary>
+    /// 测试未指定文件命名空间时保持既有裸名行为
+    /// </summary>
+    [Fact]
+    public void TestNoFileContext_KeepsLegacyBareName() {
+        var compilation = TestCompilation.Create( ShadowSource );
+        var context = compilation.GetTypeByMetadataName( "CallSiteAop.MethodInterceptionContext" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { context } );
+        Assert.Equal( "MethodInterceptionContext", scope.Reference( "CallSiteAop.MethodInterceptionContext" ) );
+    }
+
+    /// <summary>
+    /// 测试目标类型就在文件命名空间时保持短名 - 外层命名空间命中的即目标类型,不构成遮蔽
+    /// </summary>
+    [Fact]
+    public void TestForFile_OwnerInFileNamespace_StaysShort() {
+        var compilation = TestCompilation.Create( @"namespace Sample { public class Widget { } }" );
+        var widget = compilation.GetTypeByMetadataName( "Sample.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { widget } ).ForFile( "Sample" );
+        Assert.Equal( "Widget", scope.Reference( "Sample.Widget" ) );
+    }
+
+    /// <summary>
+    /// 测试全局命名空间产物文件被全局同名类型遮蔽 - 文件命名空间为空串时按全局链检查
+    /// </summary>
+    [Fact]
+    public void TestForFile_GlobalFileNamespace_ShadowedByGlobalDecoy() {
+        var compilation = TestCompilation.Create( @"
+public class MethodInterceptionContext { }
+namespace CallSiteAop { public class MethodInterceptionContext { } }" );
+        var context = compilation.GetTypeByMetadataName( "CallSiteAop.MethodInterceptionContext" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { context } ).ForFile( "" );
+        Assert.Equal( "global::CallSiteAop.MethodInterceptionContext", scope.Reference( "CallSiteAop.MethodInterceptionContext" ) );
+    }
+
+    /// <summary>
+    /// 测试泛型占位类型按简单名遮蔽 - 成员名 Foo`1 与短名 Foo 视为同名
+    /// </summary>
+    [Fact]
+    public void TestForFile_GenericArityDecoy_Shadowed() {
+        var compilation = TestCompilation.Create( @"
+namespace CallSiteAop { public class Result<T> { } }
+namespace Sample { public class Result<T> { } public class Widget { } }" );
+        var result = compilation.GetTypeByMetadataName( "CallSiteAop.Result`1" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { result } ).ForFile( "Sample" );
+        Assert.Equal( "global::CallSiteAop.Result<int>", scope.Reference( "CallSiteAop.Result<int>" ) );
+    }
+
+    /// <summary>
+    /// 测试类型符号引用同样受文件命名空间遮蔽检查
+    /// </summary>
+    [Fact]
+    public void TestForFile_SymbolReference_ShadowedQualifies() {
+        var compilation = TestCompilation.Create( ShadowSource );
+        var context = compilation.GetTypeByMetadataName( "CallSiteAop.MethodInterceptionContext" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { context } ).ForFile( "Sample" );
+        var symbol = compilation.GetTypeByMetadataName( "CallSiteAop.MethodInterceptionContext" );
+        Assert.Equal( "global::CallSiteAop.MethodInterceptionContext", scope.Reference( symbol ) );
+    }
+
+    #endregion
 
 }

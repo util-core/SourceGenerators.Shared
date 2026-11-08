@@ -89,10 +89,9 @@ internal sealed class CompilationIndex : IEquatable<CompilationIndex> {
                 typeCounts[fullMetadataName] = count + 1;
             }
         }
-        if( isGlobal == false ) {
+        namespaceMembers[fullName] = members;
+        if( isGlobal == false )
             namespaces.Add( fullName );
-            namespaceMembers[fullName] = members;
-        }
     }
 
     /// <summary>
@@ -117,6 +116,24 @@ internal sealed class CompilationIndex : IEquatable<CompilationIndex> {
         if( namespaceName == null || metadataName == null )
             return false;
         return _namespaceMembers.TryGetValue( namespaceName, out var members ) && members.Contains( metadataName );
+    }
+
+    /// <summary>
+    /// 命名空间是否包含指定简单名的顶层类型,泛型成员按反引号前段归一化匹配,源码短名不带元数据名后缀
+    /// </summary>
+    internal bool HasSimpleMember( string namespaceName, string simpleName ) {
+        if( namespaceName == null || simpleName == null )
+            return false;
+        if( _namespaceMembers.TryGetValue( namespaceName, out var members ) == false )
+            return false;
+        foreach( var member in members ) {
+            if( member == simpleName )
+                return true;
+            var backtick = member.IndexOf( '`' );
+            if( backtick > 0 && backtick == simpleName.Length && string.CompareOrdinal( member, 0, simpleName, 0, backtick ) == 0 )
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

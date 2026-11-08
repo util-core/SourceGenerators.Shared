@@ -28,6 +28,10 @@ internal sealed class ImportScope {
     /// 供产物写入的导入清单,含别名声明
     /// </summary>
     private readonly string[] _declaredImports;
+    /// <summary>
+    /// 产物文件所在命名空间,空串表示全局命名空间,null表示未指定,不参与遮蔽检查
+    /// </summary>
+    private readonly string _fileNamespace;
 
     /// <summary>
     /// 按类型符号建域
@@ -115,6 +119,28 @@ internal sealed class ImportScope {
     /// 产物using清单
     /// </summary>
     internal string[] Imports => _declaredImports;
+
+    /// <summary>
+    /// 派生产物文件作用域,共享导入分析与别名,遮蔽检查按文件命名空间的外层链进行,
+    /// 私有织入等写进用户命名空间的产物必须传入文件命名空间,全局命名空间产物传空串
+    /// </summary>
+    /// <param name="fileNamespace">产物文件命名空间,空串表示全局命名空间</param>
+    internal ImportScope ForFile( string fileNamespace ) {
+        return new ImportScope( this, fileNamespace );
+    }
+
+    /// <summary>
+    /// 从既有作用域派生文件作用域
+    /// </summary>
+    private ImportScope( ImportScope source, string fileNamespace ) {
+        _ambiguousNames = source._ambiguousNames;
+        _imports = source._imports;
+        _compilation = source._compilation;
+        _index = source._index;
+        _aliases = source._aliases;
+        _declaredImports = source._declaredImports;
+        _fileNamespace = fileNamespace;
+    }
 
     /// <summary>
     /// 创建名称索引,编译单元不能为空
@@ -396,7 +422,8 @@ internal sealed class ImportScope {
             return GeneratedSource.Full( named );
         var namespaceName = NamespaceName( named );
         var chain = BuildChain( named );
-        if( namespaceName != null && Imported( namespaceName ) && IsAmbiguous( namespaceName, ResolvingName( named ) ) == false )
+        if( namespaceName != null && Imported( namespaceName ) && IsAmbiguous( namespaceName, ResolvingName( named ) ) == false
+            && IsShadowedInFileChain( namespaceName, HeadOf( chain ) ) == false )
             return chain;
         return TypeNameText.Qualify( namespaceName == null ? chain : namespaceName + "." + chain );
     }
@@ -494,21 +521,26 @@ internal sealed class ImportScope {
     }
 
     /// <summary>
-    /// 单个类型段短名化,未导入或有歧义时补 global:: 限定
+    /// 单个类型段短名化,未导入、有歧义或被文件命名空间外层链遮蔽时补 global:: 限定
     /// </summary>
     private string ReferenceCore( string segment ) {
         if( _aliases.TryGetValue( segment, out var alias ) )
             return alias;
         var ( owner, metadataName ) = Split( segment );
-        if( owner == null )
-            return segment;
+        if( owner == null ) {
+            var globalHead = HeadOf( segment );
+            return IsShadowedInFileChain( string.Empty, globalHead ) ? TypeNameText.Qualify( segment ) : segment;
+        }
         if( IsNamespace( owner ) == false ) {
             var nested = SplitNested( segment );
             if( nested == null || Imported( nested.Value.Owner ) == false || IsAmbiguous( nested.Value.Owner, nested.Value.Id ) )
                 return TypeNameText.Qualify( segment );
-            return nested.Value.Chain;
+            var chain = nested.Value.Chain;
+            if( IsShadowedInFileChain( nested.Value.Owner, HeadOf( chain ) ) )
+                return TypeNameText.Qualify( segment );
+            return chain;
         }
-        if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) )
+        if( Imported( owner ) == false || IsAmbiguous( owner, metadataName ) || IsShadowedInFileChain( owner, metadataName ) )
             return TypeNameText.Qualify( segment );
         return metadataName;
     }
@@ -547,5 +579,46 @@ internal sealed class ImportScope {
     /// </summary>
     private bool ExistsMember( string namespaceName, string metadataName ) {
         return _index.HasNamespaceMember( namespaceName, metadataName );
+    }
+
+    /// <summary>
+    /// 短名是否被产物文件命名空间外层链遮蔽,沿文件命名空间向全局逐级查重,
+    /// 首个命中命名的层级若是目标类型自身所在命名空间则解析正确不算遮蔽,否则C#外层声明优先于using会被劫持
+    /// </summary>
+    private bool IsShadowedInFileChain( string owner, string shortName ) {
+        if( _fileNamespace == null )
+            return false;
+        var cursor = _fileNamespace;
+        while( cursor != null ) {
+            if( ExistsSimpleMember( cursor, shortName ) )
+                return cursor != owner;
+            cursor = ParentNamespace( cursor );
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 命名空间是否包含指定简单名的顶层类型,泛型成员按反引号前 arity 归一化匹配
+    /// </summary>
+    private bool ExistsSimpleMember( string namespaceName, string simpleName ) {
+        return _index.HasSimpleMember( namespaceName, simpleName );
+    }
+
+    /// <summary>
+    /// 取父命名空间,顶层命名空间的父级为全局命名空间空串,全局命名空间再无父级返回null
+    /// </summary>
+    private static string ParentNamespace( string namespaceName ) {
+        if( namespaceName.Length == 0 )
+            return null;
+        var dot = namespaceName.LastIndexOf( '.' );
+        return dot > 0 ? namespaceName.Substring( 0, dot ) : string.Empty;
+    }
+
+    /// <summary>
+    /// 取渲染链的首段,遮蔽检查按简单名解析起点进行
+    /// </summary>
+    private static string HeadOf( string renderedName ) {
+        var dot = renderedName.IndexOf( '.' );
+        return dot > 0 ? renderedName.Substring( 0, dot ) : renderedName;
     }
 }
