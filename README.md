@@ -7,7 +7,7 @@
 在**源生成器项目**引用包：
 
 ```xml
-<PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.4" PrivateAssets="all" />
+<PackageReference Include="SourceGenerators.Shared" Version="1.0.0" PrivateAssets="all" />
 ```
 
 `PrivateAssets="all"` 防止该包进入生成器发布后的依赖。
@@ -39,7 +39,7 @@ SourceGenerators.Shared\Internal\TypeNameText.cs
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0-preview.4" PrivateAssets="all" />
+    <PackageReference Include="SourceGenerators.Shared" Version="1.0.0" PrivateAssets="all" />
   </ItemGroup>
 </Project>
 ```
