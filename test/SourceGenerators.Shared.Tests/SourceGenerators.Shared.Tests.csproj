@@ -1,13 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<!-- 用 net8.0 + C# 10 + Roslyn 4.8 验证源码包的向后兼容性，而不是只验证 .NET 10 最新工具链 -->
 		<TargetFramework>net8.0</TargetFramework>
 		<LangVersion>10.0</LangVersion>
 		<IsPackable>false</IsPackable>
 		<IsTestProject>true</IsTestProject>
 		<UseAppHost>true</UseAppHost>
-		<!-- 触发 net8.0 的 apphost 包还原，按当前 SDK 的 RID 生成，避免写死 win-x64 -->
 		<RuntimeIdentifier>$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
 		<Nullable>disable</Nullable>
 		<ImplicitUsings>disable</ImplicitUsings>

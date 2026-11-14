@@ -11,6 +11,13 @@ TestResults/
 *.suo
 *.DotSettings.user
 
+# AI
+.workbuddy/
+.zcode/
+
+# 性能测试
+BenchmarkDotNet.Artifacts/
+
 # 日志
 *.binlog
 
