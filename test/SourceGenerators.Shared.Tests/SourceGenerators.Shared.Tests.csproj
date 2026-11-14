@@ -25,6 +25,9 @@
 		<!-- 直接把源码包的 Source 目录编进测试程序集，验证 internal 在消费方程序集内可用 -->
 		<Compile Include="..\..\src\SourceGenerators.Shared\Source\**\*.cs"
 		         Link="SourceGenerators.Shared\%(RecursiveDir)%(Filename)%(Extension)" />
+		<!-- 把同一批源码作为资源嵌入，供消费方编译兼容性测试按原始文本重新编译 -->
+		<EmbeddedResource Include="..\..\src\SourceGenerators.Shared\Source\**\*.cs"
+		                  LogicalName="Injected.%(Filename)%(Extension)" />
 	</ItemGroup>
 
 </Project>

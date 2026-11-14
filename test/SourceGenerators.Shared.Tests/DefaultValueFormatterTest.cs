@@ -229,4 +229,15 @@ public class DefaultValueFormatterTest {
         Assert.Null( DefaultValueFormatter.Format( "abc", intType ) );
         Assert.Equal( "true", DefaultValueFormatter.Format( "true", compilation.GetSpecialType( SpecialType.System_Boolean ) ) );
     }
+
+    /// <summary>
+    /// 测试单精度字面量不按双精度展开
+    /// </summary>
+    [Fact]
+    public void TestFormatValue_FloatKeepsSinglePrecision() {
+        var compilation = CreateCompilation();
+        var floatType = compilation.GetSpecialType( SpecialType.System_Single );
+        Assert.Equal( "0.1f", DefaultValueFormatter.FormatValue( 0.1f, floatType ) );
+        Assert.Equal( "3.4028235E+38f", DefaultValueFormatter.FormatValue( float.MaxValue, floatType ) );
+    }
 }

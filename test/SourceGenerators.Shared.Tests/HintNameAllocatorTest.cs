@@ -111,6 +111,15 @@ public class HintNameAllocatorTest {
     }
 
     /// <summary>
+    /// 测试分配 - 预留完整提示文件名时同样跳过
+    /// </summary>
+    [Fact]
+    public void TestAllocate_ReservedFullHintName_IsSkipped() {
+        var allocator = new HintNameAllocator( new[] { "Order.g.cs" } );
+        Assert.Equal( "Order_2.g.cs", allocator.Allocate( "Order" ) );
+    }
+
+    /// <summary>
     /// 测试分配 - 忽略空预留名
     /// </summary>
     [Fact]

@@ -53,4 +53,31 @@ public class TypeNameTextTest {
         Assert.Equal( text.Length - 1, TypeNameText.FindMatchingAngle( text, 4 ) );
         Assert.Equal( -1, TypeNameText.FindMatchingAngle( "List<int", 4 ) );
     }
+
+    /// <summary>
+    /// 测试顶层拆分忽略数组秩内的逗号
+    /// </summary>
+    [Fact]
+    public void TestSplitTopLevel_ArrayRankComma() {
+        var items = TypeNameText.SplitTopLevel( "Sample.Grid[,], int" ).ToArray();
+        Assert.Equal( new[] { "Sample.Grid[,]", "int" }, items );
+    }
+
+    /// <summary>
+    /// 测试分离多维与交错数组后缀
+    /// </summary>
+    [Fact]
+    public void TestSplitArraySuffix_Multidimensional() {
+        Assert.Equal( "List<int>", TypeNameText.SplitArraySuffix( "List<int>[,][]", out var suffix ) );
+        Assert.Equal( "[,][]", suffix );
+    }
+
+    /// <summary>
+    /// 测试泛型实参含多维数组时输出规范文本
+    /// </summary>
+    [Fact]
+    public void TestReference_GenericWithMultidimensionalArray() {
+        Assert.Equal( "Dictionary<Grid[,], int>",
+            GeneratedSource.Reference( "Sample.Dictionary<Sample.Grid[,], int>", new[] { "Sample" } ) );
+    }
 }

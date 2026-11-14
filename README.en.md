@@ -1,0 +1,207 @@
+# SourceGenerators.Shared
+
+[简体中文](README.md) · English
+
+A shared source package for reuse across Roslyn source generators.
+
+Source files are injected directly into the generator project; no runtime assembly dependency is produced.
+
+## Features
+
+- **Using management**: extracts namespaces into using directives so types do not need fully qualified names, and resolves namespace collisions automatically.
+- **Generated source files**: emits the file header, namespace, `using` block and module initializer skeleton, and allocates unique `.g.cs` file names.
+- **Name and literal handling**: converts type names, default values and configuration text into valid C# source text.
+
+## Requirements
+
+- `netstandard2.0`
+- C# 10+
+- `Microsoft.CodeAnalysis.CSharp` 4.8.0+
+
+## Installation
+
+Reference the package in the **source generator project**:
+
+```xml
+<PackageReference Include="SourceGenerators.Shared" Version="1.0.2" PrivateAssets="all" />
+```
+
+`PrivateAssets="all"` keeps the package out of the generator's published dependencies.
+
+## Development Guide
+
+| Type | Description |
+| --- | --- |
+| `ImportScope` | Decides how each type name is written in the output and produces the `using` list. |
+| `GeneratedSource` | Wraps a body into a complete `.cs` file. |
+| `CompilationIndex` | Indexes types and namespaces of the compilation for name decisions. |
+| `DefaultValueFormatter` | Turns default values, attribute arguments and configuration text into C# literals. |
+| `HintNameAllocator` | Allocates unique, valid `.g.cs` file names. |
+| `TypeNameText` | Low-level handling of type-name strings. |
+
+### ImportScope
+
+Behavior: builds the `using` list from the types used in the current generation, preferring short names. On namespace collisions the conflicting side is excluded and a deterministic alias is generated. `ForFile` checks for same-named types along the outer namespace chain of the generated file, preventing incorrect binding through shadowing. All type references must go through `Reference` for aliasing and shadowing fallback to take effect.
+
+**API**
+
+- `new ImportScope( index | compilation, frameworkImports, types | fullNames )` — creates a scope; the second argument is a preset `using` list (supplied by the caller, not checked for conflicts); the third is the types or fully qualified names used in this generation.
+- `Imports` — the `using` list including aliases; pass it directly to `GeneratedSource.Wrap`.
+- `ForFile( fileNamespace )` — derives a file scope, taking the actual namespace of the generated file (for private weaving, the user's namespace). Pass `""` for the global namespace; if not called, no shadowing check is performed.
+- `Reference( type )` / `Reference( fullName )` — emits an unambiguous type reference name.
+- `ReferenceExternal( fullName )` — references an external type that did not participate in scope creation.
+
+Aliases only cover simple type names; generics, arrays and nested types under an excluded namespace still use `global::` fully qualified names.
+
+**Example**
+
+```csharp
+// The compilation has Widget in both Lib.A and Lib.B
+var index = CompilationIndex.From( compilation, cancellationToken );
+var a = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+var b = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+var scope = new ImportScope( index, new[] { "System" }, new ITypeSymbol[] { a, b } );
+
+scope.Imports;        // [ "System", "Lib.A", "LibBWidget = global::Lib.B.Widget" ]
+scope.Reference( a ); // "Widget"      retained side uses the short name
+scope.Reference( b ); // "LibBWidget"  excluded side uses the alias
+
+// After passing Imports to GeneratedSource.Wrap, the generated header:
+// using System;
+// using Lib.A;
+// using LibBWidget = global::Lib.B.Widget;
+```
+
+### GeneratedSource
+
+Behavior: wraps a body into a complete source file with a file header, file-scoped namespace and `using` block; also provides type-name output and a module initializer skeleton. `AppendInitializer` requires the generated output to contain `System.Runtime.CompilerServices` and a target framework that supports module initializers.
+
+**API**
+
+- `Wrap( inner, imports, namespaceName )` — produces the complete file text; pass an empty namespace for the global namespace.
+- `AppendImports( builder, imports )` — writes only the `using` block.
+- `AppendInitializer( builder, className, classSummary, registerSummary, lines )` — writes an `internal static class` and a `[ModuleInitializer]` registration method skeleton.
+- `Full( type )` / `FullDefinition( type )` / `Short( type )` — fully qualified name, generic definition name, short name.
+- `Reference( type | fullName, imports )` — prefers short names but performs no collision detection, aliasing or shadowing handling; use `ImportScope.Reference` when those rules are needed.
+
+**Example**
+
+```csharp
+var text = GeneratedSource.Wrap( "internal class Sample { }",
+    new[] { "System", "Sample.Domain" }, "Sample.Generated" );
+// text:
+//   // <auto-generated/>
+//   namespace Sample.Generated;
+//
+//   using System;
+//   using Sample.Domain;
+//
+//   internal class Sample { }
+
+var customer = compilation.GetTypeByMetadataName( "Sample.Domain.Customer" );
+GeneratedSource.Reference( customer, new[] { "Sample.Domain" } ); // "Customer"
+GeneratedSource.Reference( customer, new string[0] );              // "global::Sample.Domain.Customer"
+```
+
+### CompilationIndex
+
+Behavior: walks the current compilation and referenced assemblies to build an index of top-level types and namespaces; results for the same `Compilation` instance are cached via `ConditionalWeakTable` and can be requested repeatedly. Only top-level types are collected; nested types participate through their containing type.
+
+**API**
+
+- `From( compilation, cancellationToken )` — builds or retrieves the cached index.
+- `TypeExists( metadataName )` — returns `true` when the metadata name exists uniquely in the compilation.
+- `ContainsNamespace( ns )` / `HasNamespaceMember( ns, metadataName )` / `HasSimpleMember( ns, simpleName )` — namespace and top-level member probes.
+- `GetNamespaceMembers( ns )` / `GetConflictingNames( namespaces )` — member list; type names duplicated across namespaces.
+- `AssemblyName` — the assembly name of the current compilation.
+
+**Example**
+
+```csharp
+// Compilation: Sample.Domain.Customer (with nested type Inner), Other.Level
+var index = CompilationIndex.From( compilation, cancellationToken );
+index.TypeExists( "Sample.Domain.Customer" );       // true
+index.TypeExists( "Sample.Domain.Customer.Inner" ); // false: only top-level types are indexed
+index.ContainsNamespace( "Sample.Domain" );         // true
+index.HasNamespaceMember( "Other", "Level" );       // true
+
+// When Lib.A and Lib.B each define Widget and Gadget
+index.GetConflictingNames( new[] { "Lib.A", "Lib.B" } ); // [ "Gadget", "Widget" ]
+```
+
+### DefaultValueFormatter
+
+Behavior: emits parameter defaults, attribute arguments and configuration text as valid C# literals, covering enums, nullable types, special floating-point values and string escaping. Returns `Omitted` (an empty string) or `null` when the value cannot be expressed.
+
+**API**
+
+- `Format( parameter )` — returns `null` when there is no explicit default; an explicit `null` becomes `default` or `null` depending on whether the type is a value or reference type.
+- `Format( text, type )` — parses configuration text against the target type; returns `null` on parse failure.
+- `Format( TypedConstant )` — emits an attribute argument, supporting `typeof(...)`, arrays and `null`.
+- `FormatValue( value, type )` — low-level literal output.
+- `Quote( text )` — string literal escaping.
+- `Omitted` — constant indicating that the value should be omitted.
+
+**Example**
+
+```csharp
+// void Run( int count = 42, string name = null, Sample sample = default )
+DefaultValueFormatter.Format( method.Parameters[0] ); // "42"
+DefaultValueFormatter.Format( method.Parameters[1] ); // "null"
+DefaultValueFormatter.Format( method.Parameters[2] ); // "default"
+
+// Configuration text parsed against the target type
+DefaultValueFormatter.Format( "High", nullableLevel ); // "( global::Sample.Level )2"
+// Attribute argument [Sample( typeof( string ), ... )]
+DefaultValueFormatter.Format( attribute.ConstructorArguments[0] ); // "typeof( string )"
+DefaultValueFormatter.Quote( "abc" );                              // "\"abc\""
+```
+
+### HintNameAllocator
+
+Behavior: allocates unique file names for `AddSource`: the short name followed by `.g.cs`; invalid characters become underscores; collisions append a `_2`, `_3`, … sequence number before the extension. Fixed file names can be reserved at construction.
+
+**API**
+
+- `new HintNameAllocator( reservedNames )` — reserves short names that are already taken.
+- `Allocate( shortName )` — returns a unique file name.
+
+**Example**
+
+```csharp
+var allocator = new HintNameAllocator( new[] { "SharedInitializer" } );
+allocator.Allocate( "Order" );             // "Order.g.cs"
+allocator.Allocate( "Order" );             // "Order_2.g.cs"      collision appends a number
+allocator.Allocate( "Sample.Order" );      // "Sample_Order.g.cs" invalid characters become underscores
+allocator.Allocate( "SharedInitializer" ); // "SharedInitializer_2.g.cs"  reserved name is skipped
+```
+
+### TypeNameText
+
+Behavior: low-level handling of type-name strings, including `global::` prefixes, array suffixes, generic argument splitting and angle-bracket matching. Use it only when you need to parse fully qualified names yourself.
+
+**API**
+
+- `StripGlobal( text )` / `Qualify( text )` — removes or adds `global::`.
+- `ArraySuffix( rank )` / `SplitArraySuffix( text, out suffix )` — generates or splits an array suffix.
+- `SplitTopLevel( body )` / `FindMatchingAngle( text, openIndex )` — splits generic arguments; matches the closing angle bracket.
+
+**Example**
+
+```csharp
+TypeNameText.StripGlobal( "global::A.B" );  // "A.B"
+TypeNameText.Qualify( "A.B" );              // "global::A.B"
+TypeNameText.ArraySuffix( 2 );              // "[,]"
+
+TypeNameText.SplitArraySuffix( "List<int>[][]", out var suffix ); // "List<int>", suffix is "[][]"
+TypeNameText.SplitTopLevel( "Dictionary<string, int>, List<int>" );
+// [ "Dictionary<string, int>", "List<int>" ]
+```
+
+## Author
+
+何镇汐
+
+## License
+
+MIT

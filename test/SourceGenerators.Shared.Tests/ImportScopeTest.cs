@@ -562,6 +562,70 @@ namespace Sample { public class Result<T> { } public class Widget { } }" );
         Assert.Equal( "global::CallSiteAop.MethodInterceptionContext", scope.Reference( symbol ) );
     }
 
+    /// <summary>
+    /// 测试文件命名空间内同名命名空间遮蔽时按全限定名输出且产物可编译
+    /// </summary>
+    [Fact]
+    public void TestForFile_NamespaceDecoy_QualifiesAndCompiles() {
+        var compilation = TestCompilation.Create(
+            "namespace Lib { public class Customer { public static int Marker; } }",
+            "namespace Sample { namespace Customer { } public class Widget { } }" );
+        var target = compilation.GetTypeByMetadataName( "Lib.Customer" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { target } ).ForFile( "Sample" );
+        var reference = scope.Reference( "Lib.Customer" );
+        Assert.Equal( "global::Lib.Customer", reference );
+        Assert.Equal( "global::Lib.Customer", scope.Reference( target ) );
+        var body = "internal static class Probe { public static int Value = " + reference + ".Marker; }";
+        var text = GeneratedSource.Wrap( body, scope.Imports, "Sample" );
+        var generated = compilation.AddSyntaxTrees( CSharpSyntaxTree.ParseText( text,
+            new CSharpParseOptions( LanguageVersion.CSharp10 ), cancellationToken: TestContext.Current.CancellationToken ) );
+        Assert.DoesNotContain( generated.GetDiagnostics( TestContext.Current.CancellationToken ),
+            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error );
+    }
+
+    /// <summary>
+    /// 测试关键字转义类型被同名类型遮蔽时按全限定名输出且产物可编译
+    /// </summary>
+    [Fact]
+    public void TestForFile_KeywordDecoy_QualifiesAndCompiles() {
+        var compilation = TestCompilation.Create(
+            "namespace Lib { public class @class { public static int Marker; } }",
+            "namespace Sample { public class @class { } }" );
+        var target = compilation.GetTypeByMetadataName( "Lib.class" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { target } ).ForFile( "Sample" );
+        var reference = scope.Reference( target );
+        Assert.Equal( "global::Lib.@class", reference );
+        var body = "internal static class Probe { public static int Value = " + reference + ".Marker; }";
+        var text = GeneratedSource.Wrap( body, scope.Imports, "Sample" );
+        var generated = compilation.AddSyntaxTrees( CSharpSyntaxTree.ParseText( text,
+            new CSharpParseOptions( LanguageVersion.CSharp10 ), cancellationToken: TestContext.Current.CancellationToken ) );
+        Assert.DoesNotContain( generated.GetDiagnostics( TestContext.Current.CancellationToken ),
+            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error );
+    }
+
+    /// <summary>
+    /// 测试别名与文件命名空间内类型同名时不声明冲突别名且产物可编译
+    /// </summary>
+    [Fact]
+    public void TestForFile_AliasNameConflict_Compiles() {
+        var compilation = TestCompilation.Create(
+            "namespace Lib.A { public class Widget { public static int Marker; } }",
+            "namespace Lib.B { public class Widget { public static int Marker; } }",
+            "namespace Sample { public class LibBWidget { } }" );
+        var first = compilation.GetTypeByMetadataName( "Lib.A.Widget" );
+        var second = compilation.GetTypeByMetadataName( "Lib.B.Widget" );
+        var scope = new ImportScope( compilation, new[] { "System" }, new ITypeSymbol[] { first, second } ).ForFile( "Sample" );
+        Assert.DoesNotContain( scope.Imports, item => item == "LibBWidget = global::Lib.B.Widget" );
+        var reference = scope.Reference( second );
+        Assert.StartsWith( "global::", reference );
+        var body = "internal static class Probe { public static int Value = " + reference + ".Marker; }";
+        var text = GeneratedSource.Wrap( body, scope.Imports, "Sample" );
+        var generated = compilation.AddSyntaxTrees( CSharpSyntaxTree.ParseText( text,
+            new CSharpParseOptions( LanguageVersion.CSharp10 ), cancellationToken: TestContext.Current.CancellationToken ) );
+        Assert.DoesNotContain( generated.GetDiagnostics( TestContext.Current.CancellationToken ),
+            diagnostic => diagnostic.Severity == DiagnosticSeverity.Error );
+    }
+
     #endregion
 
 }

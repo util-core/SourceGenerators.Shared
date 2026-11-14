@@ -1,3 +1,8 @@
+#nullable disable
+
+using System;
+using System.Collections.Generic;
+
 namespace SourceGenerators.Shared.Internal;
 
 /// <summary>
@@ -30,10 +35,24 @@ internal static class TypeNameText {
     /// </summary>
     internal static string SplitArraySuffix( string text, out string suffix ) {
         var end = text.Length;
-        while( end >= 2 && text[end - 2] == '[' && text[end - 1] == ']' )
-            end -= 2;
+        while( end >= 2 && text[end - 1] == ']' ) {
+            var open = text.LastIndexOf( '[', end - 2 );
+            if( open < 0 || IsArrayRank( text, open + 1, end - 1 ) == false )
+                break;
+            end = open;
+        }
         suffix = text.Substring( end );
         return text.Substring( 0, end );
+    }
+
+    /// <summary>
+    /// 方括号内是否仅含数组秩分隔符
+    /// </summary>
+    private static bool IsArrayRank( string text, int start, int end ) {
+        for( var index = start; index < end; index++ )
+            if( text[index] != ',' && text[index] != ' ' )
+                return false;
+        return true;
     }
 
     /// <summary>
@@ -41,6 +60,7 @@ internal static class TypeNameText {
     /// </summary>
     internal static IEnumerable<string> SplitTopLevel( string body ) {
         var depth = 0;
+        var rank = 0;
         var start = 0;
         for( var index = 0; index < body.Length; index++ ) {
             var current = body[index];
@@ -48,7 +68,11 @@ internal static class TypeNameText {
                 depth++;
             else if( current == '>' )
                 depth--;
-            else if( current == ',' && depth == 0 ) {
+            else if( current == '[' )
+                rank++;
+            else if( current == ']' )
+                rank--;
+            else if( current == ',' && depth == 0 && rank == 0 ) {
                 yield return body.Substring( start, index - start ).Trim();
                 start = index + 1;
             }

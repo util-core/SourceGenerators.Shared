@@ -1,3 +1,10 @@
+#nullable disable
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+
 namespace SourceGenerators.Shared.Internal;
 
 /// <summary>
@@ -23,7 +30,9 @@ internal sealed class HintNameAllocator {
         foreach( var name in reservedNames ) {
             if( string.IsNullOrEmpty( name ) )
                 continue;
-            _used.Add( Sanitize( name ) + FileExtension );
+            var shortName = name.EndsWith( FileExtension, StringComparison.Ordinal )
+                ? name.Substring( 0, name.Length - FileExtension.Length ) : name;
+            _used.Add( Sanitize( shortName ) + FileExtension );
         }
     }
 

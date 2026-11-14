@@ -1,3 +1,12 @@
+#nullable disable
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text;
+using Microsoft.CodeAnalysis;
+
 namespace SourceGenerators.Shared.Internal;
 
 /// <summary>
@@ -137,9 +146,37 @@ internal sealed class ImportScope {
         _imports = source._imports;
         _compilation = source._compilation;
         _index = source._index;
-        _aliases = source._aliases;
-        _declaredImports = source._declaredImports;
         _fileNamespace = fileNamespace;
+        _aliases = FilterAliases( source._aliases, fileNamespace );
+        _declaredImports = ComposeImports( _imports, _aliases );
+    }
+
+    /// <summary>
+    /// 剔除与文件命名空间外层链同名的别名
+    /// </summary>
+    private Dictionary<string, string> FilterAliases( Dictionary<string, string> aliases, string fileNamespace ) {
+        if( fileNamespace == null || aliases.Count == 0 )
+            return aliases;
+        var result = new Dictionary<string, string>( StringComparer.Ordinal );
+        foreach( var pair in aliases ) {
+            if( IsAliasTakenInFileChain( pair.Value, fileNamespace ) )
+                continue;
+            result.Add( pair.Key, pair.Value );
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 别名是否命中文件命名空间链中的类型或子命名空间
+    /// </summary>
+    private bool IsAliasTakenInFileChain( string alias, string fileNamespace ) {
+        var cursor = fileNamespace;
+        while( cursor != null ) {
+            if( _index.HasSimpleMember( cursor, alias ) || ExistsNestedNamespace( cursor, alias ) )
+                return true;
+            cursor = ParentNamespace( cursor );
+        }
+        return false;
     }
 
     /// <summary>
@@ -588,13 +625,22 @@ internal sealed class ImportScope {
     private bool IsShadowedInFileChain( string owner, string shortName ) {
         if( _fileNamespace == null )
             return false;
+        var simpleName = shortName.StartsWith( "@", StringComparison.Ordinal ) ? shortName.Substring( 1 ) : shortName;
         var cursor = _fileNamespace;
         while( cursor != null ) {
-            if( ExistsSimpleMember( cursor, shortName ) )
+            if( ExistsSimpleMember( cursor, simpleName ) || ExistsNestedNamespace( cursor, simpleName ) )
                 return cursor != owner;
             cursor = ParentNamespace( cursor );
         }
         return false;
+    }
+
+    /// <summary>
+    /// 命名空间下是否存在指定名称的子命名空间
+    /// </summary>
+    private bool ExistsNestedNamespace( string namespaceName, string name ) {
+        var fullName = namespaceName.Length == 0 ? name : namespaceName + "." + name;
+        return _index.ContainsNamespace( fullName );
     }
 
     /// <summary>

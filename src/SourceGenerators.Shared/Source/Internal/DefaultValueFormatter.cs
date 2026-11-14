@@ -1,3 +1,11 @@
+#nullable disable
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using Microsoft.CodeAnalysis;
+
 namespace SourceGenerators.Shared.Internal;
 
 /// <summary>
@@ -153,9 +161,9 @@ internal static class DefaultValueFormatter {
         if( type.TypeKind == TypeKind.Enum )
             return "( " + GeneratedSource.Full( type ) + " )" + ToInteger( value );
         if( value is float single )
-            return Floating( single, double.IsNaN( single ), float.IsPositiveInfinity( single ), float.IsNegativeInfinity( single ), "f" );
+            return Floating( single, float.IsNaN( single ), float.IsPositiveInfinity( single ), float.IsNegativeInfinity( single ) );
         if( value is double number )
-            return Floating( number, double.IsNaN( number ), double.IsPositiveInfinity( number ), double.IsNegativeInfinity( number ), "d" );
+            return Floating( number, double.IsNaN( number ), double.IsPositiveInfinity( number ), double.IsNegativeInfinity( number ) );
         if( value is decimal money )
             return money.ToString( CultureInfo.InvariantCulture ) + "m";
         if( value is long longValue )
@@ -193,17 +201,29 @@ internal static class DefaultValueFormatter {
     }
 
     /// <summary>
-    /// 浮点字面量;NaN与无穷用静态成员
+    /// 单精度浮点字面量,NaN与无穷用静态成员
     /// </summary>
-    private static string Floating( double value, bool nan, bool positive, bool negative, string suffix ) {
-        var type = suffix == "f" ? "float" : "double";
+    private static string Floating( float value, bool nan, bool positive, bool negative ) {
         if( nan )
-            return type + ".NaN";
+            return "float.NaN";
         if( positive )
-            return type + ".PositiveInfinity";
+            return "float.PositiveInfinity";
         if( negative )
-            return type + ".NegativeInfinity";
-        return value.ToString( "R", CultureInfo.InvariantCulture ) + suffix;
+            return "float.NegativeInfinity";
+        return value.ToString( "R", CultureInfo.InvariantCulture ) + "f";
+    }
+
+    /// <summary>
+    /// 双精度浮点字面量,NaN与无穷用静态成员
+    /// </summary>
+    private static string Floating( double value, bool nan, bool positive, bool negative ) {
+        if( nan )
+            return "double.NaN";
+        if( positive )
+            return "double.PositiveInfinity";
+        if( negative )
+            return "double.NegativeInfinity";
+        return value.ToString( "R", CultureInfo.InvariantCulture ) + "d";
     }
 
     /// <summary>

@@ -1,5 +1,7 @@
 # SourceGenerators.Shared
 
+[English](README.en.md) · 简体中文
+
 给 Roslyn 源生成器复用的共享源码包。
 
 源码直接注入源生成器项目，不产生运行时程序集依赖。
@@ -21,7 +23,7 @@
 在**源生成器项目**引用包：
 
 ```xml
-<PackageReference Include="SourceGenerators.Shared" Version="1.0.1" PrivateAssets="all" />
+<PackageReference Include="SourceGenerators.Shared" Version="1.0.2" PrivateAssets="all" />
 ```
 
 `PrivateAssets="all"` 防止该包进入生成器发布后的依赖。
@@ -76,7 +78,7 @@ scope.Reference( b ); // "LibBWidget"  被排除侧用别名
 
 **API**
 
-- `Wrap( inner, imports, namespaceName )` — 生成完整文件文本，命名空间不可为空。
+- `Wrap( inner, imports, namespaceName )` — 生成完整文件文本，空命名空间表示全局命名空间。
 - `AppendImports( builder, imports )` — 单独写入 `using` 块。
 - `AppendInitializer( builder, className, classSummary, registerSummary, lines )` — 写入 `internal static class` 与 `[ModuleInitializer]` 注册方法骨架。
 - `Full( type )` / `FullDefinition( type )` / `Short( type )` — 全限定名、泛型定义名、短名。

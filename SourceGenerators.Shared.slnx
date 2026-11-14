@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/build/">
+    <File Path="README.md" />
+    <File Path="README.en.md" />
+    <File Path="build/version.props" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/SourceGenerators.Shared/SourceGenerators.Shared.csproj" />
   </Folder>
